@@ -1,0 +1,13 @@
+location / {
+    try_files $uri $uri/ /index.php?s=$uri&$query_string;
+}
+location ^~ /Payimg/ {
+    try_files $uri =404;
+    add_header Access-Control-Allow-Origin "https://mp.weixin.qq.com" always;
+}
+location ~* ^/(?:\.env|composer\.(?:json|lock)|database(?:/|$)|app(?:/|$)|config(?:/|$)|route(?:/|$)|runtime(?:/|$)|2026[0-9]+\.log$) {
+    deny all;
+}
+
+client_max_body_size 64k;
+fastcgi_read_timeout 40s;

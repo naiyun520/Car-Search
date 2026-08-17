@@ -1,0 +1,62 @@
+<?php
+
+declare(strict_types=1);
+
+namespace app\controller;
+
+use app\BaseController;
+use app\service\CheckoutService;
+use think\facade\Db;
+
+/**
+ * 订单历史与旧客户端兼容层。
+ * 新结算协议只使用固定 /checkout 端点，服务标识不再依赖动态路由参数。
+ */
+final class OrderController extends BaseController
+{
+    public function create()
+    {
+        return $this->upgradeRequired();
+    }
+
+    public function createForService(int $service_id = 0)
+    {
+        return $this->upgradeRequired();
+    }
+
+    public function index()
+    {
+        $rows = Db::name('order')->where('user_id',$this->request->user['id'])->whereNotNull('paid_at')
+            ->order('id','desc')->paginate([
+                'list_rows'=>max(1,min(30,(int) $this->request->get('page_size',10))),
+                'page'=>max(1,(int) $this->request->get('page',1)),
+            ])->toArray();
+        $rows['data'] = array_map([CheckoutService::class,'safeOrder'],$rows['data']);
+        return $this->ok($rows);
+    }
+
+    public function recoverable()
+    {
+        return $this->ok(CheckoutService::recoverable($this->request->user));
+    }
+
+    public function payment(string $orderNo)
+    {
+        return $this->ok(CheckoutService::payment($this->request->user,$orderNo));
+    }
+
+    public function detail(string $orderNo)
+    {
+        return $this->ok(CheckoutService::status($this->request->user,$orderNo));
+    }
+
+    public function query(string $orderNo)
+    {
+        return $this->ok(CheckoutService::query($this->request->user,$orderNo));
+    }
+
+    private function upgradeRequired()
+    {
+        return $this->fail('当前客户端结算协议已停用，请完全退出并重新打开最新版小程序',426,426);
+    }
+}

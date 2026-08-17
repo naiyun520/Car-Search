@@ -1,0 +1,18 @@
+{
+  "name": "车辆信息查询",
+  "appid": "__UNI__CARINQUIRY",
+  "description": "合规车辆信息查询服务",
+  "versionName": "1.1.6",
+  "versionCode": "116",
+  "transformPx": false,
+  "uniStatistics": {
+    "enable": false
+  },
+  "mp-weixin": {
+    "appid": "wxd965aa89d6c91045",
+    "setting": { "urlCheck": true, "es6": true, "minified": true },
+    "usingComponents": true,
+    "permission": {}
+  },
+  "vueVersion": "3"
+}
