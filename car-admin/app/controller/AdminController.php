@@ -7,9 +7,12 @@ namespace app\controller;
 use app\BaseController;
 use app\service\ConfigService;
 use app\service\CryptoService;
+use app\service\MailService;
+use app\service\MailTemplateService;
 use app\service\PaymentLifecycleService;
 use app\service\PaymentService;
 use app\service\QueryRunnerService;
+use think\facade\Log;
 use think\facade\Db;
 
 class AdminController extends BaseController
@@ -56,12 +59,149 @@ class AdminController extends BaseController
 
     public function dashboard()
     {
-        $today = date('Y-m-d 00:00:00');
-        $grossRevenue = (float) Db::name('order')->where('paid_at','>=',$today)->sum('amount');
-        $refunds = (float) Db::name('payment')->where('refunded_at','>=',$today)->sum('refund_amount');
-        $revenue = $grossRevenue - $refunds;
-        $cost = (float) Db::name('order')->where('queried_at','>=',$today)->sum('cost_amount');
-        return $this->ok(['users'=>Db::name('user')->count(),'orders'=>Db::name('order')->count(),'today_orders'=>Db::name('order')->where('created_at','>=',$today)->count(),'today_gross_revenue'=>number_format($grossRevenue,2,'.',''),'today_refunds'=>number_format($refunds,2,'.',''),'today_revenue'=>number_format($revenue,2,'.',''),'today_cost'=>number_format($cost,4,'.',''),'today_profit'=>number_format($revenue-$cost,2,'.',''),'failed_orders'=>Db::name('order')->where('status','query_failed')->count()]);
+        $todayStart = date('Y-m-d 00:00:00');
+        $yesterdayStart = date('Y-m-d 00:00:00', strtotime('-1 day'));
+        $monthStart = date('Y-m-01 00:00:00');
+
+        $periods = [
+            'today' => $this->computeStats($todayStart, null),
+            'yesterday' => $this->computeStats($yesterdayStart, $todayStart),
+            'month' => $this->computeStats($monthStart, null),
+            'total' => $this->computeStats(null, null),
+        ];
+
+        $trend = ['dates' => [], 'orders' => [], 'sales' => [], 'profit' => []];
+        for ($i = 13; $i >= 0; $i--) {
+            $dayStart = strtotime(date('Y-m-d', strtotime('-' . $i . ' day')));
+            $start = date('Y-m-d H:i:s', $dayStart);
+            $end = date('Y-m-d H:i:s', $dayStart + 86400);
+            $trend['dates'][] = date('m-d', $dayStart);
+            $trend['orders'][] = (int) Db::name('order')->where('created_at', '>=', $start)->where('created_at', '<', $end)->count();
+            // 实收：所有已支付订单金额
+            $salesAmount = (float) Db::name('order')->where('paid_at', '>=', $start)->where('paid_at', '<', $end)->sum('amount');
+            $cost = (float) Db::name('order')->where('queried_at', '>=', $start)->where('queried_at', '<', $end)->sum('cost_amount');
+            $trend['sales'][] = round($salesAmount, 2);
+            $trend['profit'][] = round($salesAmount - $cost, 2);
+        }
+
+        $serviceDistribution = Db::name('order')
+            ->fieldRaw('service_name AS name, COUNT(*) AS value')
+            ->group('service_name')
+            ->order('value', 'desc')
+            ->limit(8)
+            ->select()->toArray();
+        foreach ($serviceDistribution as &$service) {
+            $service['value'] = (int) $service['value'];
+        }
+        unset($service);
+
+        $statusLabels = [
+            'pending_payment' => '待付款', 'payment_review' => '待核对', 'paid' => '待查询',
+            'querying' => '查询中', 'success' => '查询成功', 'query_failed' => '查询异常',
+            'refunding' => '退款处理中', 'cancelled' => '已取消', 'refunded' => '已退款',
+        ];
+        $statusDistribution = [];
+        foreach (Db::name('order')->fieldRaw('status AS name, COUNT(*) AS value')->group('status')->select()->toArray() as $statusRow) {
+            $statusDistribution[] = [
+                'name' => $statusLabels[$statusRow['name']] ?? $statusRow['name'],
+                'value' => (int) $statusRow['value'],
+            ];
+        }
+
+        return $this->ok([
+            'users' => (int) Db::name('user')->count(),
+            'total_orders' => (int) Db::name('order')->count(),
+            'failed_orders' => (int) Db::name('order')->where('status', 'query_failed')->count(),
+            'pending_orders' => (int) Db::name('order')->whereIn('status', ['pending_payment', 'payment_review', 'paid', 'querying', 'refunding'])->count(),
+            'today_paid_orders' => (int) Db::name('order')->where('paid_at', '>=', $todayStart)->count(),
+            'periods' => $periods,
+            'trend' => $trend,
+            'service_distribution' => $serviceDistribution,
+            'status_distribution' => $statusDistribution,
+        ]);
+    }
+
+    public function dashboardFinance()
+    {
+        $start = trim((string) $this->request->get('start', ''));
+        $end = trim((string) $this->request->get('end', ''));
+        if ($start === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) $start = date('Y-m-d', strtotime('-6 day'));
+        if ($end === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) $end = date('Y-m-d');
+
+        $startTs = strtotime($start);
+        $endTs = strtotime($end);
+        if ($startTs === false || $endTs === false || $startTs > $endTs) return $this->fail('日期范围无效');
+        $days = (int) (($endTs - $startTs) / 86400) + 1;
+        if ($days > 366) return $this->fail('日期范围最多选择366天');
+
+        $dates = []; $net = []; $refunds = []; $profit = []; $cost = [];
+        for ($i = 0; $i < $days; $i++) {
+            $t = $startTs + $i * 86400;
+            $startFull = date('Y-m-d 00:00:00', $t);
+            $endFull = date('Y-m-d 00:00:00', $t + 86400);
+            // 实收：所有已支付订单金额
+            $salesValue = (float) Db::name('order')->where('paid_at', '>=', $startFull)->where('paid_at', '<', $endFull)->sum('amount');
+            $refund = (float) Db::name('payment')->where('refunded_at', '>=', $startFull)->where('refunded_at', '<', $endFull)->sum('refund_amount');
+            // 手动退款按订单支付日期 paid_at 归期，与实收同日，避免退款落到操作当天
+            $manualRefund = (float) Db::name('order')->whereNotNull('manual_refund_time')->where('paid_at', '>=', $startFull)->where('paid_at', '<', $endFull)->sum('manual_refund_amount');
+            $costAmount = (float) Db::name('order')->where('queried_at', '>=', $startFull)->where('queried_at', '<', $endFull)->sum('cost_amount');
+            $dates[] = date('m-d', $t);
+            $net[] = round($salesValue, 2);
+            $refunds[] = round($refund + $manualRefund, 2);
+            $profit[] = round($salesValue - ($refund + $manualRefund) - $costAmount, 2);
+            $cost[] = round($costAmount, 4);
+        }
+
+        return $this->ok([
+            'start' => $start,
+            'end' => $end,
+            'dates' => $dates,
+            'net' => $net,
+            'refunds' => $refunds,
+            'profit' => $profit,
+            'cost' => $cost,
+        ]);
+    }
+
+    private function computeStats(?string $start, ?string $end): array
+    {
+        $orders = Db::name('order');
+        if ($start !== null) $orders->where('created_at', '>=', $start);
+        if ($end !== null) $orders->where('created_at', '<', $end);
+        $orderCount = (int) $orders->count();
+
+        // 实收：所有已支付订单金额
+        $sales = Db::name('order');
+        if ($start !== null) $sales->where('paid_at', '>=', $start);
+        if ($end !== null) $sales->where('paid_at', '<', $end);
+        $salesAmount = (float) $sales->sum('amount');
+
+        // 线上退款
+        $refund = Db::name('payment');
+        if ($start !== null) $refund->where('refunded_at', '>=', $start);
+        if ($end !== null) $refund->where('refunded_at', '<', $end);
+        $refundAmount = (float) $refund->sum('refund_amount');
+
+        // 手动退款（iOS 后台人工退款，挂在 order 表）：按订单支付日期 paid_at 归期，与实收同日
+        $manual = Db::name('order')->whereNotNull('manual_refund_time');
+        if ($start !== null) $manual->where('paid_at', '>=', $start);
+        if ($end !== null) $manual->where('paid_at', '<', $end);
+        $manualRefundAmount = (float) $manual->sum('manual_refund_amount');
+
+        // 接口成本
+        $cost = Db::name('order');
+        if ($start !== null) $cost->where('queried_at', '>=', $start);
+        if ($end !== null) $cost->where('queried_at', '<', $end);
+        $costAmount = (float) $cost->sum('cost_amount');
+
+        $totalRefund = $refundAmount + $manualRefundAmount;
+        return [
+            'orders'  => $orderCount,
+            'revenue' => round($salesAmount, 2),
+            'refunds' => round($totalRefund, 2),
+            'cost'    => round($costAmount, 4),
+            'profit'  => round($salesAmount - $totalRefund - $costAmount, 2),
+        ];
     }
 
     public function users()
@@ -214,6 +354,31 @@ class AdminController extends BaseController
         return $this->ok(['status'=>$status],$status === 'refunded' ? '退款已完成' : ($status === 'failed' ? '退款失败，可重新申请' : '退款仍在处理中'));
     }
 
+    public function manualRefundOrder(string $orderNo)
+    {
+        $order = Db::name('order')->where('order_no',$orderNo)->find();
+        if (!$order) return $this->fail('订单不存在',404,404);
+        if (!in_array((string) $order['status'], ['paid','query_failed','success'], true)) return $this->fail('当前订单状态不允许退款');
+        if (!empty($order['manual_refund_time'])) return $this->fail('该订单已登记手动退款');
+        $payment = Db::name('payment')->where('order_no',$orderNo)->find();
+        if ($payment && in_array((string) ($payment['refund_status'] ?? ''), ['requesting','processing','refunded'], true)) return $this->fail('该订单已有线上退款记录，请勿重复操作');
+
+        $reason = trim((string) $this->request->post('reason',''));
+        $amount = round((float) $order['amount'], 2);
+        $now = date('Y-m-d H:i:s');
+        $adminName = (string) ($this->request->admin['username'] ?? 'admin');
+        $remark = 'iOS 手动退款' . ($reason !== '' ? '，原因：' . $reason : '') . '，操作员：' . $adminName;
+        Db::name('order')->where('id',$order['id'])->update([
+            'status'=>'refunded',
+            'manual_refund_amount'=>$amount,
+            'manual_refund_time'=>$now,
+            'manual_refund_remark'=>mb_substr($remark,0,255),
+            'updated_at'=>$now,
+        ]);
+        $this->audit('order.manual_refund','order',$orderNo,['amount'=>$amount,'reason'=>$reason]);
+        return $this->ok(['status'=>'refunded','amount'=>$amount],'手动退款已登记');
+    }
+
     public function announcements()
     {
         return $this->ok(Db::name('announcement')->order('id','desc')->select()->toArray());
@@ -302,6 +467,107 @@ class AdminController extends BaseController
             'updated_secrets'=>array_keys(array_filter($secureFields, fn($value) => $value !== '')),
         ]);
         return $this->ok(null, '支付配置已安全保存');
+    }
+
+    public function emailSettings()
+    {
+        return $this->ok([
+            'smtp_host' => ConfigService::value('smtp_host', ''),
+            'smtp_port' => ConfigService::value('smtp_port', '465'),
+            'smtp_encryption' => ConfigService::value('smtp_encryption', 'ssl'),
+            'smtp_username' => ConfigService::value('smtp_username', ''),
+            'smtp_password_configured' => ConfigService::secure('smtp_password') !== '',
+            'smtp_from_address' => ConfigService::value('smtp_from_address', ''),
+            'smtp_from_name' => ConfigService::value('smtp_from_name', ''),
+            'email_notify_daily' => ConfigService::value('email_notify_daily', '0'),
+            'email_notify_payment' => ConfigService::value('email_notify_payment', '0'),
+            'email_notify_query_success' => ConfigService::value('email_notify_query_success', '0'),
+            'email_notify_query_failed' => ConfigService::value('email_notify_query_failed', '0'),
+            'email_recipients' => ConfigService::value('email_recipients', ''),
+        ]);
+    }
+
+    public function saveEmailSettings()
+    {
+        $host = trim((string) $this->request->post('smtp_host', ''));
+        $port = (int) $this->request->post('smtp_port', 465);
+        $encryption = strtolower(trim((string) $this->request->post('smtp_encryption', 'ssl')));
+        $username = trim((string) $this->request->post('smtp_username', ''));
+        $password = (string) $this->request->post('smtp_password', '');
+        $fromAddress = trim((string) $this->request->post('smtp_from_address', ''));
+        $fromName = trim((string) $this->request->post('smtp_from_name', ''));
+
+        if ($host !== '' && mb_strlen($host) > 200) return $this->fail('SMTP 服务器地址过长');
+        if ($port < 1 || $port > 65535) return $this->fail('端口号无效');
+        if (!in_array($encryption, ['ssl', 'tls', 'none'], true)) return $this->fail('加密方式无效');
+        if ($fromAddress !== '' && !filter_var($fromAddress, FILTER_VALIDATE_EMAIL)) return $this->fail('发件人邮箱格式不正确');
+        if ($password !== '' && mb_strlen($password) > 200) return $this->fail('密码长度超限');
+
+        // 验证收件人格式
+        $recipients = trim((string) $this->request->post('email_recipients', ''));
+        if ($recipients !== '') {
+            $list = preg_split('/[,;\n\r]+/', $recipients);
+            foreach (array_map('trim', $list) as $email) {
+                if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    return $this->fail('收件人邮箱格式不正确：' . $email);
+                }
+            }
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $settings = [
+            'smtp_host' => $host,
+            'smtp_port' => (string) $port,
+            'smtp_encryption' => $encryption,
+            'smtp_username' => $username,
+            'smtp_from_address' => $fromAddress,
+            'smtp_from_name' => $fromName,
+            'email_notify_daily' => ((string) $this->request->post('email_notify_daily', '0') === '1') ? '1' : '0',
+            'email_notify_payment' => ((string) $this->request->post('email_notify_payment', '0') === '1') ? '1' : '0',
+            'email_notify_query_success' => ((string) $this->request->post('email_notify_query_success', '0') === '1') ? '1' : '0',
+            'email_notify_query_failed' => ((string) $this->request->post('email_notify_query_failed', '0') === '1') ? '1' : '0',
+            'email_recipients' => $recipients,
+        ];
+        foreach ($settings as $key => $value) {
+            Db::name('setting')->strict(false)->replace()->insert(['key' => $key, 'value' => $value, 'updated_at' => $now]);
+        }
+        if ($password !== '') {
+            ConfigService::saveSecure('smtp_password', $password);
+        }
+
+        $this->audit('email.settings.save', 'setting', 'email', array_merge(
+            array_keys($settings),
+            $password !== '' ? ['smtp_password'] : []
+        ));
+        return $this->ok(null, '邮件配置已保存');
+    }
+
+    public function testEmail()
+    {
+        if (!MailService::available()) return $this->fail('请先完整配置 SMTP 信息');
+        $recipients = MailService::recipients();
+        if (!$recipients) return $this->fail('请先填写收件人邮箱');
+        try {
+            MailService::testConnection();
+        } catch (\Throwable $error) {
+            return $this->fail('SMTP 连接失败：' . $this->safeError($error));
+        }
+        $sent = [];
+        $failed = [];
+        foreach ($recipients as $to) {
+            try {
+                MailService::send($to, 'SMTP 测试邮件 - ' . date('Y-m-d H:i:s'), MailTemplateService::test());
+                $sent[] = $to;
+            } catch (\Throwable $error) {
+                $failed[] = $to;
+                Log::warning('email test send failed | to=' . $to . ' | message=' . mb_substr($error->getMessage(), 0, 500));
+            }
+        }
+        $this->audit('email.test', 'setting', 'email', ['sent' => $sent, 'failed' => $failed]);
+        if (!$sent) return $this->fail('测试邮件发送失败，请检查 SMTP 配置');
+        $msg = '测试邮件已发送至 ' . implode('、', $sent);
+        if ($failed) $msg .= '；' . implode('、', $failed) . ' 发送失败';
+        return $this->ok(null, $msg);
     }
 
     public function changePassword()

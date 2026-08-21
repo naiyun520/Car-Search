@@ -60,6 +60,9 @@ class UpgradeCommand extends Command
         $this->addColumn($orderTable, $orderColumns, 'request_key', 'VARCHAR(64) NULL AFTER `order_no`');
         $this->addColumn($orderTable, $orderColumns, 'query_attempts', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER `provider_request_id`');
         $this->addColumn($orderTable, $orderColumns, 'query_last_error', 'VARCHAR(500) NULL AFTER `query_attempts`');
+        $this->addColumn($orderTable, $orderColumns, 'manual_refund_amount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER `updated_at`');
+        $this->addColumn($orderTable, $orderColumns, 'manual_refund_time', 'DATETIME NULL AFTER `manual_refund_amount`');
+        $this->addColumn($orderTable, $orderColumns, 'manual_refund_remark', 'VARCHAR(255) NULL AFTER `manual_refund_time`');
         $this->addIndex($orderTable,'uk_user_request','UNIQUE INDEX','(`user_id`,`request_key`)');
         $this->addIndex($orderTable,'idx_status_updated','INDEX','(`status`,`updated_at`)');
         if ($isFirstCostUpgrade) Db::execute("UPDATE `{$orderTable}` o LEFT JOIN `{$serviceTable}` s ON s.id = o.service_id SET o.cost_amount = COALESCE(s.cost_price, 0)");

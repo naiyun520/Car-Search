@@ -37,9 +37,15 @@
 
 <script setup>
 import { ref } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShareAppMessage } from '@dcloudio/uni-app'
 import { request } from '../../utils/request'
 import { API_BASE_URL } from '../../config'
+
+// 分享配置
+onShareAppMessage(() => ({
+  title: '车辆信息查询 - 专业车辆数据服务平台',
+  path: '/pages/index/index'
+}))
 
 const services = ref([])
 const announcement = ref(null)

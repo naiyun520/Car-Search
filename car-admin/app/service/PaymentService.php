@@ -79,6 +79,13 @@ class PaymentService
                 'updated_at'=>$now,
             ]);
         });
+        // 支付确认成功后通知管理员
+        try {
+            if (ConfigService::value('email_notify_payment') === '1') {
+                $fullOrder = Db::name('order')->where('id', $order['id'])->find();
+                if ($fullOrder) MailService::notify('💰 支付成功 - ' . $order['order_no'], MailTemplateService::paymentSuccess($fullOrder));
+            }
+        } catch (\Throwable) {}
         return 'paid';
     }
 

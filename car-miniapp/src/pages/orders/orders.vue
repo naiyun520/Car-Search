@@ -14,8 +14,14 @@
 </template>
 <script setup>
 import { ref } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onShow, onShareAppMessage } from '@dcloudio/uni-app'
 import { request } from '../../utils/request'
+
+// 分享配置
+onShareAppMessage(() => ({
+  title: '车辆信息查询 - 查看服务订单',
+  path: '/pages/index/index'
+}))
 
 const STATUS_TEXT={success:'已完成',paid:'待履约',query_failed:'服务异常',querying:'处理中',payment_review:'待核对',refunded:'已退款',refunding:'退款中'}
 const orders=ref([])

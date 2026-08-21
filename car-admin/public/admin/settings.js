@@ -1,5 +1,5 @@
 loaders.settings = async () => {
-  const [settings, payment] = await Promise.all([api('/settings'), api('/payment-settings')])
+  const [settings, payment, email] = await Promise.all([api('/settings'), api('/payment-settings'), api('/email-settings')])
   const configured = value => `<span class="tag ${value ? 'success' : 'fail'}">${value ? '已配置' : '未配置'}</span>`
   $('#content').innerHTML = `
     <div class="panel">
@@ -34,6 +34,31 @@ loaders.settings = async () => {
       </form>
     </div>
     <div class="panel">
+      <div class="panel-head"><div><h3>邮件通知</h3><p class="hint">配置 SMTP 发信服务，开启后系统将在关键事件发生时自动发送邮件通知。</p></div></div>
+      <form id="email-settings" class="form">
+        <div class="form-grid">
+          <label>SMTP 服务器<input name="smtp_host" value="${escapeHtml(email.smtp_host || '')}" placeholder="smtp.example.com"></label>
+          <label>端口<input name="smtp_port" type="number" min="1" max="65535" value="${escapeHtml(email.smtp_port || '465')}"></label>
+          <label>加密方式<select name="smtp_encryption"><option value="ssl" ${email.smtp_encryption==='ssl'?'selected':''}>SSL</option><option value="tls" ${email.smtp_encryption==='tls'?'selected':''}>STARTTLS</option><option value="none" ${email.smtp_encryption==='none'?'selected':''}>无加密</option></select></label>
+          <label>用户名<input name="smtp_username" value="${escapeHtml(email.smtp_username || '')}" placeholder="登录邮箱或用户名"></label>
+          <label>密码 ${configured(email.smtp_password_configured)}<input name="smtp_password" type="password" autocomplete="new-password" placeholder="留空保持原值"></label>
+          <label>发件人地址<input name="smtp_from_address" type="email" value="${escapeHtml(email.smtp_from_address || '')}" placeholder="noreply@example.com"></label>
+          <label>发件人名称<input name="smtp_from_name" value="${escapeHtml(email.smtp_from_name || '')}" placeholder="车辆查询系统"></label>
+        </div>
+        <div class="form-grid">
+          <label>每日营销推送<select name="email_notify_daily"><option value="0" ${email.email_notify_daily!=='1'?'selected':''}>关闭</option><option value="1" ${email.email_notify_daily==='1'?'selected':''}>开启</option></select><small class="field-note">每日统计订单、收入、利润等数据并邮件推送</small></label>
+          <label>支付成功通知<select name="email_notify_payment"><option value="0" ${email.email_notify_payment!=='1'?'selected':''}>关闭</option><option value="1" ${email.email_notify_payment==='1'?'selected':''}>开启</option></select><small class="field-note">用户完成支付后立即通知</small></label>
+          <label>查询成功通知<select name="email_notify_query_success"><option value="0" ${email.email_notify_query_success!=='1'?'selected':''}>关闭</option><option value="1" ${email.email_notify_query_success==='1'?'selected':''}>开启</option></select><small class="field-note">供应商查询成功后通知</small></label>
+          <label>查询异常通知<select name="email_notify_query_failed"><option value="0" ${email.email_notify_query_failed!=='1'?'selected':''}>关闭</option><option value="1" ${email.email_notify_query_failed==='1'?'selected':''}>开启</option></select><small class="field-note">供应商查询失败时立即告警</small></label>
+        </div>
+        <label>收件人邮箱<textarea name="email_recipients" placeholder="每行一个邮箱，或用逗号分隔">${escapeHtml(email.email_recipients || '')}</textarea></label>
+        <div class="form-actions-row">
+          <button class="primary" type="submit">保存邮件配置</button>
+          <button type="button" id="email-test-btn" class="secondary">测试发送</button>
+        </div>
+      </form>
+    </div>
+    <div class="panel">
       <div class="panel-head"><div><h3>管理员安全</h3><p class="hint">修改密码后所有管理端登录会立即失效，需要使用新密码重新登录。</p></div></div>
       <form id="password-form" class="form">
         <div class="form-grid"><label>当前密码<input name="old_password" type="password" required></label><label>新密码<input name="new_password" type="password" minlength="12" maxlength="128" required placeholder="12-128位，至少三类字符"></label></div>
@@ -64,6 +89,36 @@ loaders.settings = async () => {
       toast(error.message||'支付配置保存失败')
       button.disabled=false
       button.textContent=original
+    }
+  }
+  $('#email-settings').onsubmit = async event => {
+    event.preventDefault()
+    const button=event.submitter||event.target.querySelector('button[type="submit"]')
+    const original=button.textContent
+    button.disabled=true
+    button.textContent='正在保存...'
+    try{
+      await api('/email-settings', { method: 'POST', data: Object.fromEntries(new FormData(event.target)) })
+      toast('邮件配置已保存')
+      await loaders.settings()
+    }catch(error){
+      toast(error.message||'邮件配置保存失败')
+      button.disabled=false
+      button.textContent=original
+    }
+  }
+  $('#email-test-btn').onclick = async () => {
+    const btn=$('#email-test-btn')
+    btn.disabled=true
+    btn.textContent='正在测试...'
+    try{
+      await api('/email-test',{method:'POST'})
+      toast('测试邮件已发送，请检查收件箱')
+    }catch(error){
+      toast(error.message||'测试发送失败')
+    }finally{
+      btn.disabled=false
+      btn.textContent='测试发送'
     }
   }
   $('#password-form').onsubmit = async event => {
