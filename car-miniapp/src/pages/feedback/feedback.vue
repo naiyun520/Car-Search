@@ -19,8 +19,14 @@
 </template>
 <script setup>
 import { ref } from 'vue'
-import { onLoad, onShow } from '@dcloudio/uni-app'
+import { onLoad, onShow, onShareAppMessage } from '@dcloudio/uni-app'
 import { request } from '../../utils/request'
+
+// 分享配置
+onShareAppMessage(() => ({
+  title: '车辆信息查询 - 投诉与建议',
+  path: '/pages/index/index'
+}))
 const types=[{label:'功能异常',value:'bug'},{label:'订单问题',value:'order'},{label:'投诉建议',value:'complaint'},{label:'其他',value:'other'}]
 const typeIndex=ref(0),content=ref(''),contact=ref(''),submitting=ref(false),feedback=ref([])
 onLoad(options=>{const orderNo=String(options?.order_no||'').trim();if(orderNo){typeIndex.value=1;content.value=`已付款订单查询未成功，请协助处理。\n订单号：${orderNo}`}})

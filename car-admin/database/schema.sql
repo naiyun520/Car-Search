@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS `ci_order` (
   `expired_at` datetime NOT NULL,
   `created_at` datetime NOT NULL,
   `updated_at` datetime NOT NULL,
+  `manual_refund_amount` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `manual_refund_time` datetime DEFAULT NULL,
+  `manual_refund_remark` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_order_no` (`order_no`), UNIQUE KEY `uk_user_request` (`user_id`,`request_key`), KEY `idx_user_created` (`user_id`,`created_at`), KEY `idx_status_updated` (`status`,`updated_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

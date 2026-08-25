@@ -53,8 +53,14 @@
 </template>
 <script setup>
 import { computed, ref } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShareAppMessage } from '@dcloudio/uni-app'
 import { request } from '../../utils/request'
+
+// 分享配置
+onShareAppMessage(() => ({
+  title: '车辆信息查询 - 协议与声明',
+  path: '/pages/index/index'
+}))
 
 const defaultDisclaimer='查询结果来自依法接入的数据服务，仅供授权场景参考，不作为行政、司法或交易决策的唯一依据。'
 const settings=ref(uni.getStorageSync('app_settings')||{})

@@ -21,8 +21,14 @@
 </template>
 <script setup>
 import { ref } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onShow, onShareAppMessage } from '@dcloudio/uni-app'
 import { request } from '../../utils/request'
+
+// 分享配置
+onShareAppMessage(() => ({
+  title: '车辆信息查询 - 个人中心',
+  path: '/pages/index/index'
+}))
 
 const user=ref({})
 const settings=ref(uni.getStorageSync('app_settings')||{})

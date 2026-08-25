@@ -6,5 +6,6 @@ return [
         'car:upgrade' => app\command\UpgradeCommand::class,
         'car:payment-reconcile' => app\command\PaymentReconcileCommand::class,
         'car:admin-reset' => app\command\AdminResetCommand::class,
+        'car:daily-email' => app\command\DailyEmailCommand::class,
     ],
 ];

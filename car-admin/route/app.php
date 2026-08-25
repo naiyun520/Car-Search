@@ -28,6 +28,7 @@ Route::group('api/v1', function () {
 Route::post('admin-api/login','AdminController/login');
 Route::group('admin-api', function () {
     Route::get('dashboard','AdminController/dashboard');
+    Route::get('dashboard-finance','AdminController/dashboardFinance');
     Route::get('users','AdminController/users');
     Route::post('users/:id/status','AdminController/setUserStatus');
     Route::get('orders','AdminController/orders');
@@ -40,6 +41,7 @@ Route::group('admin-api', function () {
     Route::post('orders/:orderNo/delivery','AdminController/retryDelivery');
     Route::post('orders/:orderNo/refund','AdminController/refundOrder');
     Route::post('orders/:orderNo/refund-status','AdminController/reconcileRefund');
+    Route::post('orders/:orderNo/manual-refund','AdminController/manualRefundOrder');
     Route::get('services','ServiceAdminController/index');
     Route::post('service-test/:id','ServiceAdminController/test');
     Route::post('service-icon-upload/:id','ServiceAdminController/uploadIcon');
@@ -60,4 +62,7 @@ Route::group('admin-api', function () {
     Route::post('feedback/:id/reply','FeedbackAdminController/reply');
     Route::delete('feedback/:id','FeedbackAdminController/delete');
     Route::post('password','AdminController/changePassword');
+    Route::get('email-settings','AdminController/emailSettings');
+    Route::post('email-settings','AdminController/saveEmailSettings');
+    Route::post('email-test','AdminController/testEmail');
 })->middleware(AdminAuth::class);

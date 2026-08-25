@@ -60,6 +60,13 @@ class QueryRunnerService
             } catch (\Throwable $error) {
                 Log::warning('payment delivery scheduling failed | order_no=' . $order['order_no'] . ' | message=' . mb_substr($error->getMessage(), 0, 500));
             }
+            // 查询成功后通知管理员
+            try {
+                if (ConfigService::value('email_notify_query_success') === '1') {
+                    $notifyOrder = Db::name('order')->where('id', $order['id'])->find();
+                    if ($notifyOrder) MailService::notify('✅ 查询成功 - ' . $order['order_no'], MailTemplateService::querySuccess($notifyOrder));
+                }
+            } catch (\Throwable) {}
             return ['status' => 'success'];
         } catch (\Throwable $error) {
             $finishedAt = date('Y-m-d H:i:s');
@@ -75,6 +82,13 @@ class QueryRunnerService
                 'queried_at' => $finishedAt,
                 'updated_at' => $finishedAt,
             ]);
+            // 查询失败后通知管理员
+            try {
+                if (ConfigService::value('email_notify_query_failed') === '1') {
+                    $notifyOrder = Db::name('order')->where('id', $order['id'])->find();
+                    if ($notifyOrder) MailService::notify('⚠️ 查询异常 - ' . $order['order_no'], MailTemplateService::queryFailed($notifyOrder, $message));
+                }
+            } catch (\Throwable) {}
             return ['status' => 'query_failed'];
         }
     }
