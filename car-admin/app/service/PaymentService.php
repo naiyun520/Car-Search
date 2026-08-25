@@ -70,14 +70,14 @@ class PaymentService
         Db::transaction(function () use ($order,$wechatOrder) {
             $now = date('Y-m-d H:i:s');
             $changed = Db::name('order')->where('id',$order['id'])->whereIn('status',['pending_payment','payment_review'])->update(['status'=>'paid','paid_at'=>$now,'updated_at'=>$now]);
-            if ($changed) Db::name('payment')->where('order_id',$order['id'])->update([
+            if ($changed) Db::name('payment')->where('order_id',$order['id'])->update(array_merge([
                 'status'=>'paid',
-                // Apple 支付通常没有微信支付交易单号，保留其渠道单号用于售后核验。
+                // 兼容旧字段，同时将不同语义的微信编号分别保存，供财务核验和精确检索。
                 'transaction_id'=>self::firstNonEmpty($wechatOrder, ['wxpay_order_id','wx_order_id','channel_order_id']),
                 'callback_payload'=>self::payload($wechatOrder),
                 'paid_at'=>$now,
                 'updated_at'=>$now,
-            ]);
+            ], self::wechatIdentifiers($wechatOrder)));
         });
         // 支付确认成功后通知管理员
         try {
@@ -106,10 +106,10 @@ class PaymentService
     private static function rememberWechatCheck(int $paymentId, array $order, array $wechatOrder, string $previousPayload): void
     {
         $payload = self::payload($wechatOrder);
-        Db::name('payment')->where('id', $paymentId)->update([
+        Db::name('payment')->where('id', $paymentId)->update(array_merge([
             'callback_payload'=>$payload,
             'updated_at'=>date('Y-m-d H:i:s'),
-        ]);
+        ], self::wechatIdentifiers($wechatOrder)));
         $previous = json_decode($previousPayload, true);
         $previousStatus = is_array($previous) ? ($previous['status'] ?? ($previous['not_found'] ?? null)) : null;
         $currentStatus = $wechatOrder['status'] ?? ($wechatOrder['not_found'] ?? null);
@@ -118,6 +118,19 @@ class PaymentService
                 . ' | status=' . (isset($wechatOrder['status']) ? (string) $wechatOrder['status'] : 'not_found')
                 . ' | paid_fee=' . (string) ($wechatOrder['paid_fee'] ?? ''));
         }
+    }
+
+    private static function wechatIdentifiers(array $wechatOrder): array
+    {
+        $values = [
+            'wechat_order_id'=>self::firstNonEmpty($wechatOrder, ['wx_order_id']),
+            'wechat_pay_transaction_id'=>self::firstNonEmpty($wechatOrder, ['wxpay_order_id']),
+            'channel_order_id'=>self::firstNonEmpty($wechatOrder, ['channel_order_id']),
+        ];
+        if (array_key_exists('order_type', $wechatOrder) && is_numeric($wechatOrder['order_type'])) {
+            $values['wechat_order_type'] = (int) $wechatOrder['order_type'];
+        }
+        return array_filter($values, static fn($value) => $value !== null);
     }
 
     private static function markForReview(array $order, array $wechatOrder, string $reason): void
@@ -130,3 +143,4 @@ class PaymentService
         });
     }
 }
+

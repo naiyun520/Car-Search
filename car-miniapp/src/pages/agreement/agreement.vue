@@ -48,6 +48,7 @@
       <view class="title">七、免责声明与售后</view>
       <view>{{ settings.disclaimer || defaultDisclaimer }}</view>
       <view>因数据源更新延迟、维护、网络中断或不可抗力导致结果延迟时，我们将依据实际履约和支付状态处理。已付款但查询异常的，请提交订单号联系客服，切勿重复付款。</view>
+      <view>iOS 端虚拟支付由 Apple 提供并决定退款。开发者无法主动发起 Apple 退款，也不会以私人转账替代官方退款。需要退款时，请通过 reportaproblem.apple.com 或 Apple 官方“报告问题”渠道申请；我们会按微信转发的退款问询提供可核验的履约信息，并在收到 Apple 最终退款结果通知后同步订单状态。</view>
     </view>
   </view>
 </template>
@@ -72,3 +73,4 @@ onLoad(async()=>{try{const data=await request('/bootstrap',{public:true});settin
 <style lang="scss" scoped>
 .agreement-page{padding:24rpx 24rpx 55rpx}.document-head{padding:24rpx 8rpx 30rpx}.document-title{font-size:38rpx;font-weight:800;color:#17243a}.document-meta{font-size:22rpx;color:#8a95a6;margin-top:10rpx}.section{padding:32rpx;margin-bottom:20rpx;color:#59687e;font-size:25rpx;line-height:1.9}.section>view:not(.title){margin-top:10rpx}.title{font-size:30rpx;font-weight:800;color:#1d2a41;margin-bottom:14rpx}
 </style>
+

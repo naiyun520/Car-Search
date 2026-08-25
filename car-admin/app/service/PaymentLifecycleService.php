@@ -74,6 +74,9 @@ class PaymentLifecycleService
         if (!in_array((string) $row['order_status'], self::REFUNDABLE_ORDER_STATUSES, true)) {
             throw new \RuntimeException('当前订单状态不允许退款');
         }
+        if ((int) ($row['wechat_order_type'] ?? -1) === 7) {
+            throw new \RuntimeException('iOS 订单由用户向 Apple 申请退款，开发者不能主动退款或以转账代替；系统会通过微信退款问询和退款成功通知自动同步结果');
+        }
         $wechatOrder = WechatService::queryVirtualOrder((string) $row['openid'],$orderNo,(int) $row['pay_env']);
         $wechatStatus = (int) ($wechatOrder['status'] ?? 0);
         if (in_array($wechatStatus,[5,8],true)) {
@@ -125,6 +128,20 @@ class PaymentLifecycleService
         $row = self::paymentOrder($orderNo);
         if (!$row) throw new \RuntimeException('订单不存在');
         if ((string) $row['refund_status'] === 'refunded' || (string) $row['order_status'] === 'refunded') return 'refunded';
+        if ((string) $row['refund_status'] === 'apple_review') {
+            $wechatOrder = WechatService::queryVirtualOrder((string) $row['openid'], $orderNo, (int) $row['pay_env']);
+            Db::name('payment')->where('id',$row['payment_id'])->update(['last_checked_at'=>date('Y-m-d H:i:s')]);
+            $wechatStatus = (int) ($wechatOrder['status'] ?? 0);
+            if (in_array($wechatStatus,[5,8],true)) {
+                self::markRefunded($row,$wechatOrder);
+                return 'refunded';
+            }
+            if ($wechatStatus === 7) {
+                self::markRefundFailed($row,'Apple 未批准本次退款');
+                return 'failed';
+            }
+            return 'processing';
+        }
         $refundOrderNo = trim((string) ($row['refund_order_no'] ?? ''));
         if ($refundOrderNo === '') throw new \RuntimeException('订单尚未发起退款');
         try {
@@ -210,7 +227,8 @@ class PaymentLifecycleService
         $delivered = 0;
         foreach ($deliveryRows as $item) if (self::deliver((string) $item['order_no'],false) === 'delivered') $delivered++;
 
-        $refundRows = Db::name('payment')->whereIn('refund_status',['requesting','processing'])->field('order_no')->limit($limit)->select()->toArray();
+        $refundRows = Db::name('payment')->whereIn('refund_status',['requesting','processing','apple_review'])
+            ->orderRaw('COALESCE(last_checked_at,\'1970-01-01 00:00:00\') ASC')->field('order_no')->limit($limit)->select()->toArray();
         $refunded = 0;
         foreach ($refundRows as $item) {
             try { if (self::reconcileRefund((string) $item['order_no']) === 'refunded') $refunded++; }
@@ -225,7 +243,7 @@ class PaymentLifecycleService
             ->join('payment p','p.order_id=o.id')
             ->join('user u','u.id=o.user_id')
             ->where('o.order_no',$orderNo)
-            ->field('o.id order_id,o.status order_status,o.amount,o.user_id,p.id payment_id,p.status payment_status,p.pay_env,p.delivery_status,p.delivery_attempts,p.delivery_attempted_at,p.refund_order_no,p.refund_status,p.refund_amount,p.refund_reason,p.refund_from_status,p.refund_requested_at,u.openid')
+            ->field('o.id order_id,o.status order_status,o.amount,o.user_id,p.id payment_id,p.status payment_status,p.pay_env,p.delivery_status,p.delivery_attempts,p.delivery_attempted_at,p.refund_order_no,p.refund_status,p.refund_source,p.refund_amount,p.refund_reason,p.refund_from_status,p.refund_requested_at,p.wechat_order_type,u.openid')
             ->find();
     }
 
@@ -252,6 +270,7 @@ class PaymentLifecycleService
             Db::name('payment')->where('id',$row['payment_id'])->update([
                 'status'=>'refunded',
                 'refund_status'=>'refunded',
+                'refund_source'=>$row['refund_source'] ?? ((int) ($row['wechat_order_type'] ?? -1) === 7 ? 'apple' : 'wechat'),
                 'refund_amount'=>$refundAmount,
                 'refund_payload'=>self::payload($wechatOrder),
                 'refunded_at'=>$now,
@@ -266,3 +285,4 @@ class PaymentLifecycleService
         return mb_substr((string) json_encode($data,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),0,60000);
     }
 }
+

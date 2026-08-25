@@ -1,6 +1,7 @@
 loaders.settings = async () => {
   const [settings, payment, email] = await Promise.all([api('/settings'), api('/payment-settings'), api('/email-settings')])
   const configured = value => `<span class="tag ${value ? 'success' : 'fail'}">${value ? '已配置' : '未配置'}</span>`
+  const messageCallbackUrl = `${location.origin}${payment.message_callback_path || '/wechat/message'}`
   $('#content').innerHTML = `
     <div class="panel">
       <div class="panel-head"><div><h3>运营与隐私设置</h3><p class="hint">这些内容可以由运营人员直接修改，保存后立即生效。</p></div></div>
@@ -28,8 +29,11 @@ loaders.settings = async () => {
           <label>正式 AppKey ${configured(payment.production_app_key_configured)}<input name="wechat_production_app_key" type="password" autocomplete="new-password" placeholder="留空保持原值"></label>
           <label>支付环境<select name="wechat_pay_env"><option value="0" ${Number(payment.wechat_pay_env) === 0 ? 'selected' : ''}>正式环境</option><option value="1" ${Number(payment.wechat_pay_env) === 1 ? 'selected' : ''}>沙箱环境</option></select></label>
           <label>支付通道<select name="payment_enabled"><option value="0" ${payment.payment_enabled !== '1' ? 'selected' : ''}>关闭/维护中</option><option value="1" ${payment.payment_enabled === '1' ? 'selected' : ''}>启用</option></select></label>
+          <label>消息推送 Token ${configured(payment.message_token_configured)}<input name="wechat_message_token" type="password" autocomplete="new-password" placeholder="留空保持原值"><small class="field-note">与微信公众平台消息推送配置中的 Token 完全一致</small></label>
+          <label>消息推送 EncodingAESKey ${configured(payment.message_aes_key_configured)}<input name="wechat_message_aes_key" type="password" autocomplete="new-password" placeholder="留空保持原值"><small class="field-note">使用公众平台随机生成的43位密钥</small></label>
         </div>
-        <div class="hint">AppSecret 来自“小程序后台 - 开发管理 - 开发设置”，用于登录和官方订单查询。OfferID 来自“虚拟支付 - 基础配置”，正式与沙箱环境共用同一个；沙箱 AppKey、正式 AppKey 分别在基础配置的“沙箱环境”和“现网环境”下复制。系统按所选支付环境（env 参数）自动使用对应环境的 AppKey 计算支付签名，不需要自定义回调密钥。真机调试使用沙箱环境时，微信后台的道具也必须在沙箱环境发布。</div>
+        <div class="hint">AppSecret 来自“小程序后台 - 开发管理 - 开发设置”，用于登录和官方订单查询。OfferID 来自“虚拟支付 - 基础配置”，正式与沙箱环境共用同一个；沙箱 AppKey、正式 AppKey 分别在基础配置的“沙箱环境”和“现网环境”下复制。系统按所选支付环境（env 参数）自动使用对应环境的 AppKey 计算支付签名。真机调试使用沙箱环境时，微信后台的道具也必须在沙箱环境发布。</div>
+        <div class="hint"><b>退款通知必须配置：</b>在微信公众平台“开发管理 - 开发设置 - 消息推送”填写服务器地址 <code>${escapeHtml(messageCallbackUrl)}</code>，数据格式选择 <b>JSON</b>，消息加解密方式选择 <b>安全模式</b>，并把同一组 Token、EncodingAESKey 填到上方。该入口用于 Apple 退款问询及最终退款通知；未配置时 iOS 退款无法自动同步。</div>
         <button class="primary" type="submit">安全保存支付配置</button>
       </form>
     </div>

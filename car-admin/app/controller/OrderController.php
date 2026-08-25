@@ -26,12 +26,19 @@ final class OrderController extends BaseController
 
     public function index()
     {
-        $rows = Db::name('order')->where('user_id',$this->request->user['id'])->whereNotNull('paid_at')
-            ->order('id','desc')->paginate([
+        $rows = Db::name('order')->alias('o')->leftJoin('payment p','p.order_id=o.id')
+            ->where('o.user_id',$this->request->user['id'])->whereNotNull('o.paid_at')
+            ->field('o.*,p.wechat_order_type,p.refund_status')
+            ->order('o.id','desc')->paginate([
                 'list_rows'=>max(1,min(30,(int) $this->request->get('page_size',10))),
                 'page'=>max(1,(int) $this->request->get('page',1)),
             ])->toArray();
-        $rows['data'] = array_map([CheckoutService::class,'safeOrder'],$rows['data']);
+        $rows['data'] = array_map(static function (array $row): array {
+            $safe = CheckoutService::safeOrder($row);
+            $safe['payment_platform'] = (int) ($row['wechat_order_type'] ?? -1) === 7 ? 'ios' : 'wechat';
+            $safe['refund_status'] = (string) ($row['refund_status'] ?? 'none');
+            return $safe;
+        }, $rows['data']);
         return $this->ok($rows);
     }
 
@@ -60,3 +67,4 @@ final class OrderController extends BaseController
         return $this->fail('当前客户端结算协议已停用，请完全退出并重新打开最新版小程序',426,426);
     }
 }
+

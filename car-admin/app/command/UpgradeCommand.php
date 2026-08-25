@@ -69,6 +69,10 @@ class UpgradeCommand extends Command
         $paymentTable = $prefix . 'payment';
         $paymentColumns = array_column(Db::query("SHOW COLUMNS FROM `{$paymentTable}`"), 'Field');
         $this->addColumn($paymentTable, $paymentColumns, 'pay_env', 'TINYINT NOT NULL DEFAULT 0 AFTER `amount`');
+        $this->addColumn($paymentTable, $paymentColumns, 'wechat_order_id', 'VARCHAR(100) NULL AFTER `transaction_id`');
+        $this->addColumn($paymentTable, $paymentColumns, 'wechat_pay_transaction_id', 'VARCHAR(100) NULL AFTER `wechat_order_id`');
+        $this->addColumn($paymentTable, $paymentColumns, 'channel_order_id', 'VARCHAR(100) NULL AFTER `wechat_pay_transaction_id`');
+        $this->addColumn($paymentTable, $paymentColumns, 'wechat_order_type', 'TINYINT NULL AFTER `channel_order_id`');
         $this->addColumn($paymentTable, $paymentColumns, 'last_checked_at', 'DATETIME NULL AFTER `callback_payload`');
         $this->addColumn($paymentTable, $paymentColumns, 'delivery_status', "VARCHAR(20) NOT NULL DEFAULT 'pending' AFTER `callback_payload`");
         $this->addColumn($paymentTable, $paymentColumns, 'delivery_attempts', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER `delivery_status`');
@@ -77,6 +81,7 @@ class UpgradeCommand extends Command
         $this->addColumn($paymentTable, $paymentColumns, 'delivered_at', 'DATETIME NULL AFTER `delivery_last_error`');
         $this->addColumn($paymentTable, $paymentColumns, 'refund_order_no', 'VARCHAR(32) NULL AFTER `delivered_at`');
         $this->addColumn($paymentTable, $paymentColumns, 'refund_status', "VARCHAR(20) NOT NULL DEFAULT 'none' AFTER `refund_order_no`");
+        $this->addColumn($paymentTable, $paymentColumns, 'refund_source', 'VARCHAR(20) NULL AFTER `refund_status`');
         $this->addColumn($paymentTable, $paymentColumns, 'refund_amount', 'DECIMAL(10,2) NULL AFTER `refund_status`');
         $this->addColumn($paymentTable, $paymentColumns, 'refund_reason', 'VARCHAR(10) NULL AFTER `refund_amount`');
         $this->addColumn($paymentTable, $paymentColumns, 'refund_from_status', 'VARCHAR(24) NULL AFTER `refund_reason`');
@@ -85,10 +90,37 @@ class UpgradeCommand extends Command
         $this->addColumn($paymentTable, $paymentColumns, 'refund_requested_at', 'DATETIME NULL AFTER `refund_last_error`');
         $this->addColumn($paymentTable, $paymentColumns, 'refunded_at', 'DATETIME NULL AFTER `refund_requested_at`');
         $this->addIndex($paymentTable,'uk_refund_order_no','UNIQUE INDEX','(`refund_order_no`)');
+        Db::execute("ALTER TABLE `{$paymentTable}` MODIFY `refund_order_no` VARCHAR(100) NULL");
+        $this->addIndex($paymentTable,'idx_wechat_order_id','INDEX','(`wechat_order_id`)');
+        $this->addIndex($paymentTable,'idx_wechat_pay_transaction_id','INDEX','(`wechat_pay_transaction_id`)');
+        $this->addIndex($paymentTable,'idx_channel_order_id','INDEX','(`channel_order_id`)');
         $this->addIndex($paymentTable,'idx_payment_check','INDEX','(`status`,`last_checked_at`)');
         $this->addIndex($paymentTable,'idx_delivery_status','INDEX','(`delivery_status`,`delivery_attempted_at`)');
         $this->addIndex($paymentTable,'idx_refund_status','INDEX','(`refund_status`,`updated_at`)');
         Db::execute("UPDATE `{$paymentTable}` p JOIN `{$orderTable}` o ON o.id=p.order_id SET p.refund_status='refunded', p.refunded_at=COALESCE(p.refunded_at,o.updated_at) WHERE o.status='refunded' AND p.refund_status<>'refunded'");
+        Db::execute("UPDATE `{$paymentTable}` SET
+            wechat_order_id=COALESCE(wechat_order_id,NULLIF(LEFT(JSON_UNQUOTE(JSON_EXTRACT(callback_payload,'$.wx_order_id')),100),'')),
+            wechat_pay_transaction_id=COALESCE(wechat_pay_transaction_id,NULLIF(LEFT(JSON_UNQUOTE(JSON_EXTRACT(callback_payload,'$.wxpay_order_id')),100),'')),
+            channel_order_id=COALESCE(channel_order_id,NULLIF(LEFT(JSON_UNQUOTE(JSON_EXTRACT(callback_payload,'$.channel_order_id')),100),'')),
+            wechat_order_type=COALESCE(wechat_order_type,CAST(JSON_UNQUOTE(JSON_EXTRACT(callback_payload,'$.order_type')) AS UNSIGNED))
+            WHERE JSON_VALID(callback_payload)");
+        $wechatEventTable = $prefix . 'wechat_event';
+        Db::execute("CREATE TABLE IF NOT EXISTS `{$wechatEventTable}` (
+            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `event_key` CHAR(64) NOT NULL,
+            `event_type` VARCHAR(64) NOT NULL,
+            `order_no` VARCHAR(32) NULL,
+            `request_cipher` TEXT NOT NULL,
+            `response_cipher` TEXT NULL,
+            `process_status` VARCHAR(20) NOT NULL DEFAULT 'received',
+            `last_error` VARCHAR(500) NULL,
+            `created_at` DATETIME NOT NULL,
+            `updated_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_event_key` (`event_key`),
+            KEY `idx_event_order` (`order_no`,`created_at`),
+            KEY `idx_event_status` (`process_status`,`updated_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $runtime = root_path() . 'runtime';
         if (!is_dir($runtime) && !mkdir($runtime, 0750, true) && !is_dir($runtime)) throw new \RuntimeException('无法创建 runtime 目录');
         file_put_contents($runtime . DIRECTORY_SEPARATOR . 'install.lock', json_encode(['upgraded_at'=>date(DATE_ATOM),'version'=>'3.0.0'], JSON_UNESCAPED_UNICODE), LOCK_EX);
@@ -110,3 +142,4 @@ class UpgradeCommand extends Command
         Db::execute("ALTER TABLE `{$table}` ADD {$type} `{$index}` {$columns}");
     }
 }
+

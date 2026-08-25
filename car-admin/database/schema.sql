@@ -84,6 +84,10 @@ CREATE TABLE IF NOT EXISTS `ci_payment` (
   `order_id` bigint unsigned NOT NULL,
   `order_no` varchar(32) NOT NULL,
   `transaction_id` varchar(100) DEFAULT NULL,
+  `wechat_order_id` varchar(100) DEFAULT NULL,
+  `wechat_pay_transaction_id` varchar(100) DEFAULT NULL,
+  `channel_order_id` varchar(100) DEFAULT NULL,
+  `wechat_order_type` tinyint DEFAULT NULL,
   `amount` decimal(10,2) NOT NULL,
   `pay_env` tinyint NOT NULL DEFAULT 0,
   `status` varchar(20) NOT NULL DEFAULT 'created',
@@ -94,8 +98,9 @@ CREATE TABLE IF NOT EXISTS `ci_payment` (
   `delivery_attempted_at` datetime DEFAULT NULL,
   `delivery_last_error` varchar(500) DEFAULT NULL,
   `delivered_at` datetime DEFAULT NULL,
-  `refund_order_no` varchar(32) DEFAULT NULL,
+  `refund_order_no` varchar(100) DEFAULT NULL,
   `refund_status` varchar(20) NOT NULL DEFAULT 'none',
+  `refund_source` varchar(20) DEFAULT NULL,
   `refund_amount` decimal(10,2) DEFAULT NULL,
   `refund_reason` varchar(10) DEFAULT NULL,
   `refund_from_status` varchar(24) DEFAULT NULL,
@@ -106,7 +111,21 @@ CREATE TABLE IF NOT EXISTS `ci_payment` (
   `paid_at` datetime DEFAULT NULL,
   `created_at` datetime NOT NULL,
   `updated_at` datetime NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_order_id` (`order_id`), UNIQUE KEY `uk_transaction` (`transaction_id`), UNIQUE KEY `uk_refund_order_no` (`refund_order_no`), KEY `idx_payment_check` (`status`,`last_checked_at`), KEY `idx_delivery_status` (`delivery_status`,`delivery_attempted_at`), KEY `idx_refund_status` (`refund_status`,`updated_at`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_order_id` (`order_id`), UNIQUE KEY `uk_transaction` (`transaction_id`), UNIQUE KEY `uk_refund_order_no` (`refund_order_no`), KEY `idx_wechat_order_id` (`wechat_order_id`), KEY `idx_wechat_pay_transaction_id` (`wechat_pay_transaction_id`), KEY `idx_channel_order_id` (`channel_order_id`), KEY `idx_payment_check` (`status`,`last_checked_at`), KEY `idx_delivery_status` (`delivery_status`,`delivery_attempted_at`), KEY `idx_refund_status` (`refund_status`,`updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `ci_wechat_event` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `event_key` char(64) NOT NULL,
+  `event_type` varchar(64) NOT NULL,
+  `order_no` varchar(32) DEFAULT NULL,
+  `request_cipher` text NOT NULL,
+  `response_cipher` text,
+  `process_status` varchar(20) NOT NULL DEFAULT 'received',
+  `last_error` varchar(500) DEFAULT NULL,
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_event_key` (`event_key`), KEY `idx_event_order` (`order_no`,`created_at`), KEY `idx_event_status` (`process_status`,`updated_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `ci_announcement` (
@@ -204,3 +223,4 @@ INSERT INTO `ci_setting` (`key`,`value`,`updated_at`) VALUES
 ('wechat_offer_id','',NOW()),
 ('wechat_pay_env','0',NOW())
 ON DUPLICATE KEY UPDATE `key`=VALUES(`key`);
+

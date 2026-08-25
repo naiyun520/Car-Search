@@ -21,6 +21,9 @@ const serviceAdmin = read('car-admin/app/controller/ServiceAdminController.php')
 const serviceUi = read('car-admin/public/admin/services.js')
 const builtQuery = read('car-miniapp/dist/build/mp-weixin/pages/query/query.js')
 const protocol = read('car-miniapp/src/utils/protocol.js')
+const messageController = read('car-admin/app/controller/WechatMessageController.php')
+const messageCrypto = read('car-admin/app/service/WechatMessageCryptoService.php')
+const refundEvents = read('car-admin/app/service/WechatRefundEventService.php')
 
 for (const endpoint of ['checkout/create','checkout/status','checkout/payment','checkout/confirm','checkout/query','checkout/recoverable']) {
   assert.match(route, new RegExp(`['\"]${endpoint.replace('/', '\\/')}['\"]`), `route missing: ${endpoint}`)
@@ -42,7 +45,7 @@ assert.ok(payment.includes('payment_review'), 'payment mismatch review state mis
 assert.ok(payment.includes('rememberWechatCheck'), 'WeChat pending-state observability missing')
 assert.ok(!clientPayment.includes('getSystemInfoSync'), 'deprecated getSystemInfoSync remains in payment flow')
 assert.ok(clientPayment.includes('paymentUncertain'), 'payment failures are not classified')
-assert.ok(clientPayment.includes("systemPlatform === 'devtools'"), 'developer simulator detection missing')
+assert.ok(clientPayment.includes('getDeviceInfo?.()') && clientPayment.includes('getAppBaseInfo?.()'), 'modern device/payment capability detection missing')
 assert.ok(wechat.includes("'left_fee'=>$leftFee"), 'refund left_fee missing')
 assert.ok(request.includes("JSON.stringify(options.data || {})"), 'JSON transport not explicit')
 assert.ok(request.includes('data.service_code = serviceCode'), 'service code must be duplicated in JSON body')
@@ -53,11 +56,12 @@ assert.ok(queryPage.includes("saveFlow({ request_key:requestKey"), 'idempotency 
 assert.ok(queryPage.includes('data:{ service_code:serviceCode, request_key:requestKey'), 'checkout page must carry identifiers explicitly')
 assert.ok(queryPage.includes('/checkout/create?service_code='), 'unambiguous checkout create URL missing')
 assert.ok(queryPage.includes('!isTransientRequestError(error)'), 'permanent confirm errors must not be polled')
-assert.ok(protocol.includes("20260815.1") && checkout.includes("20260815.1"), 'client/server protocol versions differ')
+const clientProtocol = protocol.match(/CLIENT_VERSION\s*=\s*['"]([^'"]+)['"]/)?.[1]
+assert.ok(clientProtocol && checkout.includes(clientProtocol), 'client/server protocol versions differ')
 assert.ok(!queryPage.includes('confirmContinuePayment'), 'unpaid orders must not be restored or advertised')
 assert.ok(!queryPage.includes("order.status === 'paid' || order.status === 'query_failed'"), 'failed queries must not be submitted again by the client')
 assert.ok(!ordersPage.includes("query_failed:'重试'"), 'history must not offer self-service provider retries')
-assert.ok(ordersPage.includes("query_failed:'联系客服'"), 'failed paid orders must direct users to support')
+assert.ok(ordersPage.includes("['query_failed','payment_review'].includes(item.status)") && ordersPage.includes('contactService(item.order_no)'), 'failed paid orders must direct users to support')
 assert.ok(queryRunner.includes('retryFromAdmin') && !queryRunner.includes('RETRY_COOLDOWN_SECONDS'), 'provider retries must be administrator-only')
 assert.ok(queryRunner.includes('refreshServiceSnapshotForAdmin') && queryRunner.includes('inputKeys'), 'administrator retry must safely refresh corrected provider configuration')
 assert.ok(route.includes("Route::get('order-detail/:orderNo'"), 'unambiguous admin order-detail route missing')
@@ -72,6 +76,21 @@ assert.ok(serviceUi.includes('test-service') && serviceUi.includes('/service-tes
 assert.ok(serviceUi.includes('可能产生接口费用'), 'billable test warning missing')
 assert.ok(!builtQuery.includes('services/${'), 'production miniapp still contains dynamic service checkout route')
 assert.ok(!builtQuery.includes('功能定位失败'), 'obsolete diagnosis leaked into production build')
+for (const field of ['wechat_order_id','wechat_pay_transaction_id','channel_order_id','wechat_order_type','refund_source']) {
+  assert.ok(schema.includes(`\`${field}\``), `payment schema missing ${field}`)
+  assert.ok(upgrade.includes(`'${field}'`), `payment upgrade missing ${field}`)
+}
+assert.ok(schema.includes('ci_wechat_event') && schema.includes('uk_event_key'), 'WeChat event idempotency table missing')
+assert.ok(route.includes("Route::get('wechat/message'") && route.includes("Route::post('wechat/message'"), 'WeChat callback routes missing')
+assert.ok(messageController.includes("encrypt_type', '')") && messageController.includes('msg_signature'), 'secure-mode callback guard missing')
+assert.ok(messageController.includes('decryptEcho'), 'encrypted URL verification missing')
+assert.ok(read('car-admin/app/ExceptionHandle.php').includes('isWechatCallback'), 'WeChat callback exception isolation missing')
+assert.ok(messageCrypto.includes('AES-256-CBC') && messageCrypto.includes('hash_equals'), 'WeChat AES/signature verification missing')
+assert.ok(refundEvents.includes('xpay_subscribe_ios_refund_query_notify'), 'iOS refund inquiry handler missing')
+assert.ok(refundEvents.includes('xpay_refund_notify') && refundEvents.includes('$retCode === 0'), 'final refund notification success guard missing')
+assert.ok(adminApp.includes("whereOr('p.wechat_order_id'") || read('car-admin/app/controller/AdminController.php').includes("whereOr('p.wechat_order_id'"), 'multi-identifier order search missing')
+assert.ok(ordersPage.includes('reportaproblem.apple.com'), 'iOS official refund guidance missing')
+assert.ok(ordersPage.includes("item.payment_platform === 'ios' && item.status === 'query_failed'"), 'iOS refund guidance must only appear for failed queries')
 
 // Official formula: hex(HMAC-SHA256(key, uri + '&' + exact JSON string)).
 const key = 'contract-test-app-key'

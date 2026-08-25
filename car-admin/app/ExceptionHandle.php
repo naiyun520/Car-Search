@@ -14,6 +14,10 @@ class ExceptionHandle extends Handle
 {
     public function render($request, Throwable $exception): Response
     {
+        if ($this->isWechatCallback($request)) {
+            try { Log::error("wechat callback exception | {$exception->getMessage()} in {$exception->getFile()}:{$exception->getLine()}\n{$exception->getTraceAsString()}"); } catch (Throwable) {}
+            return response('service unavailable', 503, ['Content-Type'=>'text/plain; charset=utf-8', 'Cache-Control'=>'no-store']);
+        }
         if ($this->isApiRequest($request)) {
             $errorId = date('YmdHis') . '-' . strtoupper(bin2hex(random_bytes(3)));
             try { Log::error("[{$errorId}] {$exception->getMessage()} in {$exception->getFile()}:{$exception->getLine()}\n{$exception->getTraceAsString()}"); } catch (Throwable) {}
@@ -28,5 +32,10 @@ class ExceptionHandle extends Handle
     {
         $path = ltrim($request->pathinfo(), '/');
         return str_starts_with($path, 'api/') || str_starts_with($path, 'admin-api/');
+    }
+
+    private function isWechatCallback(Request $request): bool
+    {
+        return ltrim($request->pathinfo(), '/') === 'wechat/message';
     }
 }

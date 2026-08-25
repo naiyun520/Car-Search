@@ -227,21 +227,29 @@ class AdminController extends BaseController
 
     public function orders()
     {
-        $query = Db::name('order')->alias('o')->leftJoin('user u','u.id=o.user_id')->leftJoin('payment p','p.order_id=o.id')->field('o.id,o.order_no,o.user_id,o.service_name,o.amount,o.status,o.paid_at,o.queried_at,o.created_at,u.nickname,u.phone,p.callback_payload,p.delivery_status,p.delivery_attempts,p.delivery_last_error,p.delivered_at,p.refund_status,p.refund_order_no,p.refund_amount,p.refund_reason,p.refund_last_error,p.refund_requested_at,p.refunded_at');
+        $query = Db::name('order')->alias('o')->leftJoin('user u','u.id=o.user_id')->leftJoin('payment p','p.order_id=o.id')->field('o.id,o.order_no,o.user_id,o.service_name,o.amount,o.status,o.paid_at,o.queried_at,o.created_at,u.nickname,u.phone,p.callback_payload,p.wechat_order_type,p.wechat_order_id,p.wechat_pay_transaction_id,p.channel_order_id,p.delivery_status,p.delivery_attempts,p.delivery_last_error,p.delivered_at,p.refund_status,p.refund_source,p.refund_order_no,p.refund_amount,p.refund_reason,p.refund_last_error,p.refund_requested_at,p.refunded_at');
         if ($this->request->get('status','') !== '') $query->where('o.status',(string)$this->request->get('status'));
         $keyword = trim((string) $this->request->get('keyword',''));
         if ($keyword !== '') {
             $query->where(function ($builder) use ($keyword) {
-                $builder->whereOr('o.order_no','like','%' . $keyword . '%')->whereOr('u.nickname','like','%' . $keyword . '%')->whereOr('u.phone','like','%' . $keyword . '%');
+                $like = '%' . $keyword . '%';
+                $builder->whereOr('o.order_no','like',$like)
+                    ->whereOr('p.order_no','like',$like)
+                    ->whereOr('p.transaction_id','like',$like)
+                    ->whereOr('p.wechat_order_id','like',$like)
+                    ->whereOr('p.wechat_pay_transaction_id','like',$like)
+                    ->whereOr('p.channel_order_id','like',$like)
+                    ->whereOr('u.nickname','like',$like)
+                    ->whereOr('u.phone','like',$like);
                 if (ctype_digit($keyword)) $builder->whereOr('o.user_id',(int) $keyword);
             });
         }
         $page = $query->order('o.id','desc')->paginate(['list_rows'=>20,'page'=>max(1,(int)$this->request->get('page',1))])->toArray();
         foreach ($page['data'] as &$row) {
             $wechatOrder = json_decode((string) ($row['callback_payload'] ?? ''), true);
-            $orderType = is_array($wechatOrder) && array_key_exists('order_type', $wechatOrder)
-                ? (int) $wechatOrder['order_type']
-                : null;
+            $orderType = $row['wechat_order_type'] !== null
+                ? (int) $row['wechat_order_type']
+                : (is_array($wechatOrder) && array_key_exists('order_type', $wechatOrder) ? (int) $wechatOrder['order_type'] : null);
             $row['payment_platform'] = in_array($orderType, [7,8], true)
                 ? 'ios'
                 : (in_array($orderType, [0,1], true) ? 'wechat' : 'unknown');
@@ -278,7 +286,7 @@ class AdminController extends BaseController
     {
         $row = Db::name('order')->alias('o')->leftJoin('user u','u.id=o.user_id')->leftJoin('payment p','p.order_id=o.id')
             ->where('o.order_no',$orderNo)
-            ->field('o.*,u.nickname,u.phone,p.transaction_id,p.status payment_status,p.pay_env,p.callback_payload,p.last_checked_at,p.delivery_status,p.delivery_attempts,p.delivery_attempted_at,p.delivery_last_error,p.delivered_at,p.refund_status,p.refund_order_no,p.refund_amount,p.refund_reason,p.refund_last_error,p.refund_requested_at,p.refunded_at')
+            ->field('o.*,u.nickname,u.phone,p.transaction_id,p.wechat_order_id,p.wechat_pay_transaction_id,p.channel_order_id,p.wechat_order_type,p.status payment_status,p.pay_env,p.callback_payload,p.last_checked_at,p.delivery_status,p.delivery_attempts,p.delivery_attempted_at,p.delivery_last_error,p.delivered_at,p.refund_status,p.refund_source,p.refund_order_no,p.refund_amount,p.refund_reason,p.refund_last_error,p.refund_requested_at,p.refunded_at')
             ->find();
         if (!$row) return $this->fail('订单不存在',404,404);
         try {
@@ -420,6 +428,7 @@ class AdminController extends BaseController
     public function paymentSettings()
     {
         $wechat = ConfigService::wechat();
+        $message = ConfigService::wechatMessage();
         return $this->ok([
             'payment_enabled' => (string) ConfigService::value('payment_enabled', '0'),
             'wechat_app_id' => $wechat['app_id'],
@@ -428,6 +437,10 @@ class AdminController extends BaseController
             'app_secret_configured' => $wechat['app_secret'] !== '',
             'sandbox_app_key_configured' => $wechat['sandbox_app_key'] !== '',
             'production_app_key_configured' => $wechat['production_app_key'] !== '',
+            'message_token_configured' => $message['token'] !== '',
+            'message_aes_key_configured' => $message['aes_key'] !== '',
+            // 前端使用当前站点 origin 拼接，避免不同 ThinkPHP Request 版本的 domain() 兼容问题。
+            'message_callback_path' => '/wechat/message',
         ]);
     }
 
@@ -450,16 +463,25 @@ class AdminController extends BaseController
             'wechat_app_secret' => trim((string) $this->request->post('wechat_app_secret', '')),
             'wechat_sandbox_app_key' => trim((string) $this->request->post('wechat_sandbox_app_key', '')),
             'wechat_production_app_key' => trim((string) $this->request->post('wechat_production_app_key', '')),
+            'wechat_message_token' => trim((string) $this->request->post('wechat_message_token', '')),
+            'wechat_message_aes_key' => trim((string) $this->request->post('wechat_message_aes_key', '')),
         ];
+        if ($secureFields['wechat_message_token'] !== '' && !preg_match('/^[A-Za-z0-9]{3,32}$/', $secureFields['wechat_message_token'])) {
+            return $this->fail('消息推送 Token 需为3至32位字母或数字');
+        }
+        if ($secureFields['wechat_message_aes_key'] !== '' && !preg_match('/^[A-Za-z0-9]{43}$/', $secureFields['wechat_message_aes_key'])) {
+            return $this->fail('消息推送 EncodingAESKey 必须是微信公众平台生成的43位字符串');
+        }
         foreach ($secureFields as $key => $value) if ($value !== '') ConfigService::saveSecure($key, $value);
         ConfigService::saveSecure('wechat_access_token', '');
         Db::name('setting')->strict(false)->replace()->insert(['key'=>'wechat_access_token_expires_at','value'=>'0','updated_at'=>$now]);
 
         $wechat = ConfigService::wechat();
+        $message = ConfigService::wechatMessage();
         $selectedAppKey = $payEnv === 1 ? $wechat['sandbox_app_key'] : $wechat['production_app_key'];
-        if ($enabled && in_array('', [$wechat['app_id'],$wechat['app_secret'],$wechat['offer_id'],$selectedAppKey], true)) {
+        if ($enabled && in_array('', [$wechat['app_id'],$wechat['app_secret'],$wechat['offer_id'],$selectedAppKey,$message['token'],$message['aes_key']], true)) {
             Db::name('setting')->strict(false)->replace()->insert(['key'=>'payment_enabled','value'=>'0','updated_at'=>$now]);
-            return $this->fail('配置尚不完整：请填写 AppID、AppSecret、OfferID 和当前支付环境对应的 AppKey');
+            return $this->fail('配置尚不完整：除支付参数外，还必须配置微信消息推送 Token 与 EncodingAESKey，才能闭环处理 iOS 退款');
         }
         Db::name('setting')->strict(false)->replace()->insert(['key'=>'payment_enabled','value'=>$enabled?'1':'0','updated_at'=>$now]);
         $this->audit('payment.settings.save','setting','payment',[

@@ -51,4 +51,15 @@ class ConfigService
             'pay_env' => (int) self::value('wechat_pay_env', $fallback['pay_env'] ?? 0),
         ];
     }
+
+    public static function wechatMessage(): array
+    {
+        $wechat = self::wechat();
+        return [
+            'app_id'=>$wechat['app_id'],
+            'token'=>self::secure('wechat_message_token'),
+            'aes_key'=>self::secure('wechat_message_aes_key'),
+        ];
+    }
 }
+

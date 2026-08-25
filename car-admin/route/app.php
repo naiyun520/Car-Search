@@ -8,6 +8,10 @@ Route::get('api/v1/bootstrap','PublicController/bootstrap');
 Route::get('api/v1/service-icon/:file','PublicController/serviceIcon');
 Route::post('api/v1/auth/login','AuthController/login');
 
+// 微信公众平台“开发管理 - 消息推送”的服务器地址。仅接受安全模式（AES）JSON 推送。
+Route::get('wechat/message','WechatMessageController/verify');
+Route::post('wechat/message','WechatMessageController/receive');
+
 Route::group('api/v1', function () {
     Route::get('me','AuthController/me');
     Route::post('me/profile','AuthController/updateProfile');
@@ -66,3 +70,4 @@ Route::group('admin-api', function () {
     Route::post('email-settings','AdminController/saveEmailSettings');
     Route::post('email-test','AdminController/testEmail');
 })->middleware(AdminAuth::class);
+
