@@ -36,6 +36,7 @@ Route::group('admin-api', function () {
     Route::get('users','AdminController/users');
     Route::post('users/:id/status','AdminController/setUserStatus');
     Route::get('orders','AdminController/orders');
+    Route::get('wechat-messages','AdminController/wechatMessages');
     Route::post('orders/batch-delete','AdminController/deleteOrders');
     // Keep detail off the collection prefix. ThinkPHP can prefix-match the
     // collection route and otherwise return the paginated list here.

@@ -34,6 +34,7 @@ loaders.settings = async () => {
         </div>
         <div class="hint">AppSecret 来自“小程序后台 - 开发管理 - 开发设置”，用于登录和官方订单查询。OfferID 来自“虚拟支付 - 基础配置”，正式与沙箱环境共用同一个；沙箱 AppKey、正式 AppKey 分别在基础配置的“沙箱环境”和“现网环境”下复制。系统按所选支付环境（env 参数）自动使用对应环境的 AppKey 计算支付签名。真机调试使用沙箱环境时，微信后台的道具也必须在沙箱环境发布。</div>
         <div class="hint"><b>退款通知必须配置：</b>在微信公众平台“开发管理 - 开发设置 - 消息推送”填写服务器地址 <code>${escapeHtml(messageCallbackUrl)}</code>，数据格式选择 <b>JSON</b>，消息加解密方式选择 <b>安全模式</b>，并把同一组 Token、EncodingAESKey 填到上方。该入口用于 Apple 退款问询及最终退款通知；未配置时 iOS 退款无法自动同步。</div>
+        <div class="form-section"><h4>iOS 退款问询自动回复</h4><p class="hint">Apple 审核退款时系统必须立即答复，无法等待人工操作。这里修改后对新问询生效；已答复事件重推时仍返回首次答案。可用变量：<code>{order_no}</code>、<code>{delivered_at}</code>、<code>{refund_reason}</code>、<code>{decision_reason}</code>。</p><div class="form-grid"><label>已完整履约：结论<textarea name="ios_refund_reject_result_info" maxlength="200" required>${escapeHtml(payment.ios_refund_reject_result_info||'')}</textarea></label><label>已完整履约：证据<textarea name="ios_refund_reject_evidence" maxlength="1000" required>${escapeHtml(payment.ios_refund_reject_evidence||'')}</textarea></label><label>未确认完整履约：结论<textarea name="ios_refund_approve_result_info" maxlength="200" required>${escapeHtml(payment.ios_refund_approve_result_info||'')}</textarea></label><label>未确认完整履约：证据<textarea name="ios_refund_approve_evidence" maxlength="1000" required>${escapeHtml(payment.ios_refund_approve_evidence||'')}</textarea></label></div></div>
         <button class="primary" type="submit">安全保存支付配置</button>
       </form>
     </div>

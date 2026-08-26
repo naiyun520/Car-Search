@@ -25,3 +25,4 @@ html,body{max-width:100%;overflow-x:hidden}main,#content,.panel,.dialog-card,.di
 .form-actions-row{display:flex;gap:12px;align-items:center}
 .form-actions-row .primary{width:auto;flex:none}
 .form-actions-row .secondary{width:auto;flex:none;height:40px;padding:0 20px;border:1px solid #d5dce7;border-radius:8px;background:#fff;color:#48566d;cursor:pointer}
+.message-summary{max-width:440px;white-space:normal;line-height:1.5}.message-dialog{width:min(900px,95vw)}.message-json{max-height:360px;overflow:auto;padding:16px;border:1px solid var(--line);border-radius:9px;background:#111b2e;color:#dce7f7;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6}

@@ -84,6 +84,7 @@ class UpgradeCommand extends Command
         $this->addColumn($paymentTable, $paymentColumns, 'refund_source', 'VARCHAR(20) NULL AFTER `refund_status`');
         $this->addColumn($paymentTable, $paymentColumns, 'refund_amount', 'DECIMAL(10,2) NULL AFTER `refund_status`');
         $this->addColumn($paymentTable, $paymentColumns, 'refund_reason', 'VARCHAR(10) NULL AFTER `refund_amount`');
+        Db::execute("ALTER TABLE `{$paymentTable}` MODIFY `refund_reason` VARCHAR(64) NULL");
         $this->addColumn($paymentTable, $paymentColumns, 'refund_from_status', 'VARCHAR(24) NULL AFTER `refund_reason`');
         $this->addColumn($paymentTable, $paymentColumns, 'refund_payload', 'TEXT NULL AFTER `refund_from_status`');
         $this->addColumn($paymentTable, $paymentColumns, 'refund_last_error', 'VARCHAR(500) NULL AFTER `refund_payload`');

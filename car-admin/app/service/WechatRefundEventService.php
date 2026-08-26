@@ -19,8 +19,7 @@ final class WechatRefundEventService
         if ($eventType === self::IOS_INQUIRY_EVENT) return self::handleIosInquiry($event);
         if ($eventType === self::REFUND_NOTIFY_EVENT) return self::handleRefundNotify($event);
         if ($eventType === self::GOODS_DELIVER_EVENT) return self::handleGoodsDeliverNotify($event);
-        Log::info('wechat message event acknowledged | event=' . mb_substr($eventType, 0, 64));
-        return ['ErrCode'=>0, 'ErrMsg'=>'success'];
+        return self::handleOtherEvent($event, $eventType);
     }
 
     private static function handleGoodsDeliverNotify(array $event): array
@@ -77,6 +76,7 @@ final class WechatRefundEventService
         $row = self::findPaymentOrder($payOrderId, $channelBill, '');
         $provideStatus = (int) self::field($event, ['provide_status', 'ProvideStatus'], -1);
         $productId = trim((string) self::field($event, ['product_id', 'ProductId']));
+        $refundReason = trim((string) self::field($event, ['refund_request_reason', 'RefundRequestReason']));
         $productMatches = self::productMatches($row, $productId);
         $delivered = $row
             && (string) $row['order_status'] === 'success'
@@ -87,8 +87,8 @@ final class WechatRefundEventService
         if ($delivered) {
             $response = [
                 'result_code'=>1,
-                'result_info'=>'订单已完成服务交付，建议不予退款',
-                'evidence'=>'业务订单 ' . $row['order_no'] . ' 已于 ' . ($row['delivered_at'] ?: $row['updated_at']) . ' 完成查询并向微信确认发货。',
+                'result_info'=>self::replyTemplate('ios_refund_reject_result_info', '订单已完成服务交付，建议不予退款', $row, $refundReason),
+                'evidence'=>self::replyTemplate('ios_refund_reject_evidence', '业务订单 {order_no} 已于 {delivered_at} 完成查询并向微信确认发货。', $row, $refundReason),
             ];
         } else {
             $reason = !$row
@@ -96,8 +96,8 @@ final class WechatRefundEventService
                 : (!$productMatches ? '退款商品与本地订单商品无法完成一致性核验' : '本地记录未同时满足查询成功和微信确认发货');
             $response = [
                 'result_code'=>0,
-                'result_info'=>'未能确认服务已经完整交付，建议退款',
-                'evidence'=>$reason . ($row ? '，业务订单 ' . $row['order_no'] : '') . '。',
+                'result_info'=>self::replyTemplate('ios_refund_approve_result_info', '未能确认服务已经完整交付，建议退款', $row, $refundReason),
+                'evidence'=>self::replyTemplate('ios_refund_approve_evidence', '{decision_reason}' . ($row ? '，业务订单 {order_no}' : '') . '。', $row, $refundReason, $reason),
             ];
         }
 
@@ -108,7 +108,8 @@ final class WechatRefundEventService
             Db::name('payment')->where('id', $row['payment_id'])->update([
                 'refund_source'=>'apple',
                 'refund_status'=>'apple_review',
-                'refund_reason'=>'apple',
+                'refund_reason'=>mb_substr($refundReason !== '' ? $refundReason : 'UNKNOWN', 0, 64),
+                'refund_from_status'=>$row['refund_from_status'] ?: $row['order_status'],
                 'refund_requested_at'=>$row['refund_requested_at'] ?: $requestedAt,
                 'refund_last_error'=>null,
                 'updated_at'=>date('Y-m-d H:i:s'),
@@ -116,6 +117,46 @@ final class WechatRefundEventService
         }
         Log::info('apple refund inquiry answered | order_no=' . ($orderNo ?: 'unmatched') . ' | result_code=' . $response['result_code']);
         return $response;
+    }
+
+    private static function handleOtherEvent(array $event, string $eventType): array
+    {
+        $type = $eventType !== '' ? mb_substr($eventType, 0, 64) : 'unknown';
+        $orderNo = trim((string) self::field($event, ['OutTradeNo','out_trade_no','MchOrderId','mch_order_id','pay_order_id','PayOrderId']));
+        $identity = (string) self::field($event, ['MsgId','msg_id','RequestId','request_id','ComplaintId','complaint_id']);
+        $canonical = json_encode(self::canonicalize($event), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $eventKey = self::eventKey($type, [$identity !== '' ? $identity : hash('sha256', (string) $canonical)]);
+        $response = ['ErrCode'=>0, 'ErrMsg'=>'success'];
+        self::ensureEvent($eventKey, $type, $event, $orderNo !== '' ? $orderNo : null);
+        Db::name('wechat_event')->where('event_key', $eventKey)->update([
+            'order_no'=>$orderNo !== '' ? mb_substr($orderNo, 0, 32) : null,
+            'response_cipher'=>CryptoService::encrypt($response),
+            'process_status'=>'acknowledged',
+            'last_error'=>null,
+            'updated_at'=>date('Y-m-d H:i:s'),
+        ]);
+        Log::info('wechat message event acknowledged | event=' . $type);
+        return $response;
+    }
+
+    private static function replyTemplate(string $key, string $default, ?array $row, string $refundReason, string $decisionReason = ''): string
+    {
+        $template = trim((string) ConfigService::value($key, $default));
+        if ($template === '') $template = $default;
+        return mb_substr(strtr($template, [
+            '{order_no}'=>(string) ($row['order_no'] ?? '未匹配'),
+            '{delivered_at}'=>(string) (($row['delivered_at'] ?? null) ?: ($row['updated_at'] ?? '未知时间')),
+            '{refund_reason}'=>$refundReason !== '' ? $refundReason : 'UNKNOWN',
+            '{decision_reason}'=>$decisionReason,
+        ]), 0, $key === 'ios_refund_reject_evidence' || $key === 'ios_refund_approve_evidence' ? 1000 : 200);
+    }
+
+    private static function canonicalize(array $value): array
+    {
+        ksort($value);
+        foreach ($value as &$item) if (is_array($item)) $item = self::canonicalize($item);
+        unset($item);
+        return $value;
     }
 
     private static function handleRefundNotify(array $event): array

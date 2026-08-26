@@ -33,7 +33,7 @@ class AuthController extends BaseController
             Db::name('user')->where('id', $user['id'])->update(['session_key_cipher'=>$sessionKeyCipher,'last_login_at'=>$now,'updated_at'=>$now]);
         }
         $token = bin2hex(random_bytes(32));
-        Db::name('user_token')->insert(['user_id'=>$user['id'],'token_hash'=>hash('sha256',$token),'expires_at'=>date('Y-m-d H:i:s', strtotime('+30 days')),'created_at'=>$now]);
+        Db::name('user_token')->insert(['user_id'=>$user['id'],'token_hash'=>hash('sha256',$token),'expires_at'=>date('Y-m-d H:i:s', strtotime('+2 hours')),'created_at'=>$now]);
         return $this->ok(['token'=>$token,'user'=>self::safeUser($user)]);
     }
 

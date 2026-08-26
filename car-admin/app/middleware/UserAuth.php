@@ -13,7 +13,11 @@ class UserAuth
     public function handle(Request $request, Closure $next)
     {
         $token = preg_replace('/^Bearer\s+/i', '', $request->header('authorization', ''));
-        $session = $token ? Db::name('user_token')->where('token_hash', hash('sha256', $token))->where('expires_at', '>', date('Y-m-d H:i:s'))->find() : null;
+        $session = $token ? Db::name('user_token')
+            ->where('token_hash', hash('sha256', $token))
+            ->where('expires_at', '>', date('Y-m-d H:i:s'))
+            ->where('created_at', '>=', date('Y-m-d H:i:s', strtotime('-2 hours')))
+            ->find() : null;
         if (!$session) {
             return json(['code' => 401, 'message' => '请先登录', 'data' => null], 401);
         }

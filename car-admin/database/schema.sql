@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS `ci_payment` (
   `refund_status` varchar(20) NOT NULL DEFAULT 'none',
   `refund_source` varchar(20) DEFAULT NULL,
   `refund_amount` decimal(10,2) DEFAULT NULL,
-  `refund_reason` varchar(10) DEFAULT NULL,
+  `refund_reason` varchar(64) DEFAULT NULL,
   `refund_from_status` varchar(24) DEFAULT NULL,
   `refund_payload` text,
   `refund_last_error` varchar(500) DEFAULT NULL,

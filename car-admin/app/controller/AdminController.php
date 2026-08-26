@@ -227,7 +227,7 @@ class AdminController extends BaseController
 
     public function orders()
     {
-        $query = Db::name('order')->alias('o')->leftJoin('user u','u.id=o.user_id')->leftJoin('payment p','p.order_id=o.id')->field('o.id,o.order_no,o.user_id,o.service_name,o.amount,o.status,o.paid_at,o.queried_at,o.created_at,u.nickname,u.phone,p.callback_payload,p.wechat_order_type,p.wechat_order_id,p.wechat_pay_transaction_id,p.channel_order_id,p.delivery_status,p.delivery_attempts,p.delivery_last_error,p.delivered_at,p.refund_status,p.refund_source,p.refund_order_no,p.refund_amount,p.refund_reason,p.refund_last_error,p.refund_requested_at,p.refunded_at');
+        $query = Db::name('order')->alias('o')->leftJoin('user u','u.id=o.user_id')->leftJoin('payment p','p.order_id=o.id')->field('o.id,o.order_no,o.user_id,o.service_name,o.amount,o.status,o.paid_at,o.queried_at,o.created_at,u.nickname,u.phone,p.callback_payload,p.wechat_order_type,p.wechat_order_id,p.wechat_pay_transaction_id,p.channel_order_id,p.delivery_status,p.delivery_attempts,p.delivery_last_error,p.delivered_at,p.refund_status,p.refund_source,p.refund_order_no,p.refund_amount,p.refund_reason,p.refund_from_status,p.refund_last_error,p.refund_requested_at,p.refunded_at');
         if ($this->request->get('status','') !== '') $query->where('o.status',(string)$this->request->get('status'));
         $keyword = trim((string) $this->request->get('keyword',''));
         if ($keyword !== '') {
@@ -253,10 +253,64 @@ class AdminController extends BaseController
             $row['payment_platform'] = in_array($orderType, [7,8], true)
                 ? 'ios'
                 : (in_array($orderType, [0,1], true) ? 'wechat' : 'unknown');
+            $row['fulfillment_status'] = in_array((string) $row['status'], ['refunding','refunded'], true)
+                ? ((string) ($row['refund_from_status'] ?? '') ?: ((string) ($row['delivery_status'] ?? '') === 'delivered' ? 'success' : 'query_failed'))
+                : (string) $row['status'];
             unset($row['callback_payload']);
         }
         unset($row);
         return $this->ok($page);
+    }
+
+    public function wechatMessages()
+    {
+        $type = trim((string) $this->request->get('type', ''));
+        $status = trim((string) $this->request->get('status', ''));
+        $query = Db::name('wechat_event');
+        if ($type !== '') $query->where('event_type', $type);
+        if ($status !== '') $query->where('process_status', $status);
+        $page = $query->order('id', 'desc')->paginate(['list_rows'=>20,'page'=>max(1,(int)$this->request->get('page',1))])->toArray();
+        foreach ($page['data'] as &$row) {
+            try {
+                $request = CryptoService::decrypt((string) $row['request_cipher']);
+                $response = !empty($row['response_cipher']) ? CryptoService::decrypt((string) $row['response_cipher']) : [];
+            } catch (\Throwable) {
+                $request = [];
+                $response = [];
+                $row['last_error'] = (string) ($row['last_error'] ?: '历史消息无法使用当前主密钥解密');
+            }
+            $row['summary'] = $this->wechatEventSummary((string) $row['event_type'], $request);
+            $row['request'] = $request;
+            $row['response'] = $response;
+            unset($row['request_cipher'], $row['response_cipher'], $row['event_key']);
+        }
+        unset($row);
+        return $this->ok($page);
+    }
+
+    private function wechatEventSummary(string $type, array $payload): string
+    {
+        $reason = trim((string) ($payload['refund_request_reason'] ?? $payload['RefundRequestReason'] ?? ''));
+        if ($type === 'xpay_subscribe_ios_refund_query_notify') return 'iOS 退款问询' . ($reason !== '' ? '：' . $this->refundReasonLabel($reason) : '');
+        if ($type === 'xpay_refund_notify') return '退款结果：' . ((int) ($payload['RetCode'] ?? $payload['ret_code'] ?? -1) === 0 ? '成功' : (string) ($payload['RetMsg'] ?? $payload['ret_msg'] ?? '失败'));
+        if ($type === 'xpay_goods_deliver_notify') return '虚拟支付发货通知';
+        if ($type === 'xpay_coin_pay_notify') return '代币支付通知';
+        if ($type === 'xpay_complaint_notify') return '用户投诉：' . mb_substr((string) ($payload['ComplaintDetail'] ?? $payload['complaint_detail'] ?? ''), 0, 100);
+        if ($type === 'xpay_wxpay_callback_notify') return '微信支付风控通知：' . mb_substr((string) ($payload['Remark'] ?? $payload['remark'] ?? ''), 0, 100);
+        return '其他微信消息';
+    }
+
+    private function refundReasonLabel(string $reason): string
+    {
+        return [
+            'UNINTENDED_PURCHASE'=>'误操作购买',
+            'DID_NOT_MEAN_TO_BUY'=>'误操作购买',
+            'ITEM_NOT_RECEIVED'=>'未收到购买内容',
+            'ITEM_NOT_AS_DESCRIBED'=>'内容与描述不符',
+            'QUALITY_ISSUE'=>'质量问题',
+            'CHILD_PURCHASE'=>'未成年人购买',
+            'OTHER'=>'其他原因',
+        ][strtoupper($reason)] ?? $reason;
     }
 
     public function deleteOrders()
@@ -300,6 +354,7 @@ class AdminController extends BaseController
             $row['wechat_order'] = $wechatOrder;
         }
         $row['wechat_order'] ??= [];
+        $row['refund_reason_label'] = !empty($row['refund_reason']) ? $this->refundReasonLabel((string) $row['refund_reason']) : '';
         unset($row['callback_payload']);
         unset($row['input_cipher'],$row['result_cipher'],$row['service_snapshot_cipher']);
         return $this->ok($row);
@@ -439,6 +494,10 @@ class AdminController extends BaseController
             'production_app_key_configured' => $wechat['production_app_key'] !== '',
             'message_token_configured' => $message['token'] !== '',
             'message_aes_key_configured' => $message['aes_key'] !== '',
+            'ios_refund_reject_result_info' => ConfigService::value('ios_refund_reject_result_info', '订单已完成服务交付，建议不予退款'),
+            'ios_refund_reject_evidence' => ConfigService::value('ios_refund_reject_evidence', '业务订单 {order_no} 已于 {delivered_at} 完成查询并向微信确认发货。'),
+            'ios_refund_approve_result_info' => ConfigService::value('ios_refund_approve_result_info', '未能确认服务已经完整交付，建议退款'),
+            'ios_refund_approve_evidence' => ConfigService::value('ios_refund_approve_evidence', '{decision_reason}，业务订单 {order_no}。'),
             // 前端使用当前站点 origin 拼接，避免不同 ThinkPHP Request 版本的 domain() 兼容问题。
             'message_callback_path' => '/wechat/message',
         ]);
@@ -473,6 +532,18 @@ class AdminController extends BaseController
             return $this->fail('消息推送 EncodingAESKey 必须是微信公众平台生成的43位字符串');
         }
         foreach ($secureFields as $key => $value) if ($value !== '') ConfigService::saveSecure($key, $value);
+        $replyFields = [
+            'ios_refund_reject_result_info'=>[200,'订单已完成服务交付，建议不予退款'],
+            'ios_refund_reject_evidence'=>[1000,'业务订单 {order_no} 已于 {delivered_at} 完成查询并向微信确认发货。'],
+            'ios_refund_approve_result_info'=>[200,'未能确认服务已经完整交付，建议退款'],
+            'ios_refund_approve_evidence'=>[1000,'{decision_reason}，业务订单 {order_no}。'],
+        ];
+        foreach ($replyFields as $key=>[$limit,$default]) {
+            $current = (string) ConfigService::value($key, $default);
+            $value = trim((string) $this->request->post($key, $current));
+            if ($value === '' || mb_strlen($value) > $limit) return $this->fail('iOS 退款回复内容不能为空或超过长度限制');
+            Db::name('setting')->strict(false)->replace()->insert(['key'=>$key,'value'=>$value,'updated_at'=>$now]);
+        }
         ConfigService::saveSecure('wechat_access_token', '');
         Db::name('setting')->strict(false)->replace()->insert(['key'=>'wechat_access_token_expires_at','value'=>'0','updated_at'=>$now]);
 
