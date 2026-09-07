@@ -348,4 +348,3 @@ npm run build:mp-weixin
 3. `微信小程序官方文档/miniprogram/dev/platform-capabilities/business-capabilities/virtual-payment.md`：虚拟支付、服务端订单核验、发货、退款以及 iOS 限制。
 
 线上最终行为仍取决于微信后台权限、正式配置、基础库/客户端版本和真实接口响应。支付、退款、发货或回调代码变更时，须按工程根目录 `AGENTS.md` 的规则重新核对最新官方在线文档。
-
