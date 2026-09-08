@@ -1,0 +1,7 @@
+target/
+.idea/
+*.iml
+../.local/
+../.env.local
+../miniapp/node_modules/
+../miniapp/dist/

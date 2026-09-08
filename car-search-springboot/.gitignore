@@ -1,0 +1,6 @@
+.local/
+.env.local
+backend/target/
+miniapp/node_modules/
+miniapp/dist/
+car_test_mysql_data_bJDYo.sql

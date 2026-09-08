@@ -1,6 +1,6 @@
 # Car Search Spring Boot + UniApp 项目说明
 
-> 面向首次接手本项目的开发者。本文依据当前源码整理，描述“现在有什么、各部分做什么、从哪里继续开发”。本项目仍处于重构迁移期，不能将已存在的代码等同于已经完成生产验证。
+> 面向首次接手本项目的开发者。本文依据当前源码整理，描述“现在有什么、各部分做什么、从哪里继续开发”。代码迁移与本地验收已于 2026-09-08 完成，但微信和生产基础设施仍须按本文完成真实环境切换验收。
 
 ## 1. 项目定位
 
@@ -10,7 +10,7 @@
 4. 新后端直接兼容原系统的 MySQL `ci_*` 表、接口协议和 AES-256-GCM 密文，不会自动建表或改表。
 5. 小程序公开 API 前缀是 `/api/v1`，管理 API 前缀是 `/admin-api`，微信消息入口是 `/wechat/message`。
 6. 客户端协议版本当前为 `20260815.2`，统一响应结构为 `{ code, message, data }`。
-7. 当前版本尚未完全完成，迁移范围和进度以 `MIGRATION.md` 及本文“当前完成度”章节为准。
+7. 当前版本已完成代码迁移和本地验收，生产切换状态以 `MIGRATION.md` 及本文“当前完成度”章节为准。
 
 ## 2. 顶层目录与文件
 
@@ -288,6 +288,7 @@ npm run dev:mp-weixin
 ```powershell
 cd E:\XY_MZF\Car-Search\car-search-springboot
 powershell -ExecutionPolicy Bypass -File .\test-local.ps1
+node ..\tests\springboot-migration-contract.mjs
 powershell -ExecutionPolicy Bypass -File .\stop-backend.ps1
 powershell -ExecutionPolicy Bypass -File .\stop-local.ps1
 
@@ -315,16 +316,15 @@ npm run build:mp-weixin
 7. 用户订单、用户反馈和静态管理后台的主要功能。
 8. 微信安全模式消息解密、事件归档和部分退款事件处理。
 
-### 10.2 尚需完善/验证
+### 10.2 生产切换前仍需验证
 
-1. 补齐 iOS 退款事件的完整状态机、异常分支和线上回归。
-2. 完成所有管理 API、审计、邮件和定时任务的功能验收。
-3. 建立 PHP 与 Spring Boot 双实现契约测试，证明相同输入产生兼容响应和状态变化。
-4. 覆盖支付失败、超时、重复请求、回调丢失、重复通知、退款失败和发货重试。
-5. 使用真实微信开发版/体验版核对 AppID、OfferID、道具 ID、AppKey、回调 URL、消息 Token 和 EncodingAESKey。
-6. 确认各端差异，尤其是 iOS 15+/微信 8.0.68+、iOS 不支持沙箱、iOS 最低 1 元等限制。
-7. 修复或确认当前部分 Markdown/JSON 中文内容可能存在的历史编码显示问题，统一使用 UTF-8。
-8. 完成生产 Nginx、HTTPS、合法域名、文件持久化、备份、日志和监控配置。
+1. 使用真实微信开发版/体验版覆盖支付失败、超时、回调丢失、重复通知、退款失败和发货重试。
+2. 使用真实 iOS 订单验证退款问询三秒应答、重复通知幂等和最终退款推送。
+3. 使用生产 SMTP 完成连接、投递和运营通知验收。
+4. 核对 AppID、OfferID、道具 ID、AppKey、回调 URL、消息 Token、EncodingAESKey 和微信后台权限。
+5. 确认各端差异，尤其是 iOS 15+/微信 8.0.68+、iOS 不支持沙箱、iOS 最低 1 元等限制。
+6. 完成生产 Nginx、HTTPS、合法域名、文件持久化、备份、日志和监控配置。
+7. 影子期采集相同请求在 PHP/Spring 的响应和数据库状态，完成真实流量兼容性确认后再切换入口。
 
 ## 11. 开发约束与注意事项
 

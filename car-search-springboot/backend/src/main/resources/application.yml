@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: car-search-backend
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/car_inquiry?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:car_inquiry}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      minimum-idle: 2
+      connection-timeout: 5000
+  jackson:
+    default-property-inclusion: non_null
+  servlet:
+    multipart:
+      max-file-size: 64KB
+      max-request-size: 96KB
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: framework
+  tomcat:
+    max-http-form-post-size: 32KB
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+car:
+  client-protocol: "20260815.2"
+  data-encrypt-key: ${DATA_ENCRYPT_KEY:}
+  storage-path: ${CAR_STORAGE_PATH:./runtime/uploads}
+  wechat:
+    app-id: ${WECHAT_APP_ID:}
+    app-secret: ${WECHAT_APP_SECRET:}
+logging:
+  level:
+    root: INFO
+    cn.naiblog.carsearch: INFO
+debug: false
