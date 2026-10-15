@@ -18,8 +18,16 @@ spring:
 server:
   port: ${PORT:8080}
   forward-headers-strategy: framework
+  compression:
+    enabled: true
+    min-response-size: 1KB
+    mime-types: application/json,text/html,text/css,application/javascript,image/svg+xml
   tomcat:
     max-http-form-post-size: 32KB
+    threads:
+      max: ${TOMCAT_MAX_THREADS:100}
+      min-spare: ${TOMCAT_MIN_SPARE_THREADS:10}
+    accept-count: ${TOMCAT_ACCEPT_COUNT:100}
 management:
   endpoints:
     web:
@@ -29,8 +37,10 @@ management:
     health:
       show-details: never
 car:
-  client-protocol: "20260815.2"
+  client-protocol: "20260921.1"
   data-encrypt-key: ${DATA_ENCRYPT_KEY:}
+  # 本地界面联调专用。生产环境必须保持 false；即使开启也只接受回环地址请求。
+  dev-login-enabled: ${CAR_DEV_LOGIN_ENABLED:false}
   storage-path: ${CAR_STORAGE_PATH:./runtime/uploads}
   wechat:
     app-id: ${WECHAT_APP_ID:}

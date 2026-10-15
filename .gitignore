@@ -1,0 +1,18 @@
+# 微信官方文档本地镜像（可通过 tools/wechat_docs_mirror.py 重新抓取）
+微信小程序官方文档/
+
+# Python
+__pycache__/
+*.pyc
+
+# 环境与本地配置
+.env
+*.local
+
+# 数据库备份文件
+mysql_data_*/
+*.sql.bak
+
+# 系统文件
+Thumbs.db
+Desktop.ini

@@ -2,20 +2,26 @@ const serviceStatus = value => ({0:['维护','wait'],1:['运行','success'],2:['
 const inputTypes = [['text','普通文本'],['name','姓名'],['plate','车牌号'],['plate_prefix','车牌或前缀'],['plate_or_vin','车牌或VIN'],['vin','VIN'],['idcard','身份证号'],['identity','证件/企业代码']]
 
 let serviceRows = []
+let serviceCategories = []
+let encryptionHealth = null
 const serviceIconUrl = icon => /^[a-f0-9]{32}\.(?:png|jpg|webp)$/.test(String(icon||'')) ? `/api/v1/service-icon/${encodeURIComponent(icon)}` : ''
+const builtinIcons=[['car','车辆'],['vin','VIN'],['plate','车牌'],['verified','核验'],['location','归属地'],['transfer','过户'],['owner','车主'],['etc','ETC'],['insurance','保险'],['search','查询'],['document','档案'],['shield','安全']]
+const iconGlyph={car:'🚘',vin:'VIN',plate:'牌',verified:'✓',location:'⌖',transfer:'⇄',owner:'人',etc:'ETC',insurance:'盾',search:'⌕',document:'档',shield:'安'}
+const serviceIconMarkup=icon=>{const url=serviceIconUrl(icon);if(url)return `<img src="${url}" alt="">`;const key=String(icon||'').replace(/^builtin:/,'');return `<span class="builtin-service-icon">${escapeHtml(iconGlyph[key]||'车')}</span>`}
 loaders.services = async () => {
-  serviceRows = await api('/services')
+  ;[serviceRows,serviceCategories,encryptionHealth] = await Promise.all([api('/services'),api('/service-categories'),api('/encryption-health')])
   renderServiceList()
 }
 
 function renderServiceList() {
   $('#content').innerHTML = `
     <div class="panel service-list-panel">
-      <div class="panel-head"><div><h3>接口服务管理</h3><p class="hint">每项服务拥有独立接口地址、请求字段和返回规则。接口 URL 加密保存，密钥不会返回浏览器。</p></div><button class="primary compact" id="add-service">新增接口</button></div>
-      <div class="table-wrap"><table><thead><tr><th>排序</th><th>服务</th><th>编码</th><th>接口地址</th><th>售价</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>
-        ${serviceRows.map((row, index) => { const state=serviceStatus(row.status); const up=index===0?`<span style="opacity:.3;cursor:not-allowed;padding:4px 7px">↑</span>`:`<button class="action sort-btn" data-move="-1" style="font-size:15px;padding:4px 7px">↑</button>`; const down=index===serviceRows.length-1?`<span style="opacity:.3;cursor:not-allowed;padding:4px 7px">↓</span>`:`<button class="action sort-btn" data-move="1" style="font-size:15px;padding:4px 7px">↓</button>`; const icon=serviceIconUrl(row.icon); const endpoint=row.api_url_error?'<span class="tag fail">密文无法解密，请检查主密钥</span>':row.api_url_configured?escapeHtml(row.api_url):'<span class="tag fail">未配置</span>'; return `<tr><td>${up}${down}</td><td><div class="service-title-cell">${icon?`<img src="${icon}" alt="">`:'<span class="service-icon-empty"></span>'}<div><b>${escapeHtml(row.name)}</b><small class="table-sub">${escapeHtml(row.description)}</small></div></div></td><td><code>${escapeHtml(row.code)}</code></td><td class="endpoint-cell">${endpoint}</td><td>¥${row.sale_price}</td><td><span class="tag ${state[1]}">${state[0]}</span></td><td>${row.updated_at}</td><td><button class="action test-service" data-id="${row.id}">测试</button><button class="action edit-service" data-id="${row.id}">编辑</button><button class="action danger delete-service" data-id="${row.id}">删除</button></td></tr>` }).join('') || '<tr><td colspan="8" class="empty">暂无接口服务</td></tr>'}
+      <div class="panel-head"><div><h3>接口服务管理</h3><p class="hint">分类、双端价格、支付道具与供应商规则统一在这里维护。列表不展示服务说明，说明仅用于小程序查询页。</p></div><button class="primary compact" id="add-service">新增接口</button></div>
+      ${encryptionHealth&&!encryptionHealth.healthy?`<div class="security-warning"><b>主密钥诊断未通过</b><span>当前密钥指纹 ${escapeHtml(encryptionHealth.key_fingerprint)}，${encryptionHealth.encrypted_count} 条密文中仅 ${encryptionHealth.decryptable_count} 条可解密。请恢复原 DATA_ENCRYPT_KEY，或在编辑接口时重新填写完整 URL 后保存。</span></div>`:''}
+      <div class="table-wrap"><table><thead><tr><th>排序</th><th>服务</th><th>分类</th><th>编码</th><th>接口地址</th><th>安卓 / iOS 售价</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>
+        ${serviceRows.map((row, index) => { const state=serviceStatus(row.status); const up=index===0?`<span style="opacity:.3;cursor:not-allowed;padding:4px 7px">↑</span>`:`<button class="action sort-btn" data-move="-1" style="font-size:15px;padding:4px 7px">↑</button>`; const down=index===serviceRows.length-1?`<span style="opacity:.3;cursor:not-allowed;padding:4px 7px">↓</span>`:`<button class="action sort-btn" data-move="1" style="font-size:15px;padding:4px 7px">↓</button>`; const endpoint=row.api_url_error?'<span class="tag fail">密文无法解密</span>':row.api_url_configured?escapeHtml(row.api_url):'<span class="tag fail">未配置</span>'; return `<tr><td>${up}${down}</td><td><div class="service-title-cell">${serviceIconMarkup(row.icon)}<div><b>${escapeHtml(row.name)}</b></div></div></td><td>${escapeHtml(row.category_name||'未分类')}</td><td><code>${escapeHtml(row.code)}</code></td><td class="endpoint-cell">${endpoint}</td><td><b>¥${row.sale_price_android}</b><small class="table-sub">iOS ¥${row.sale_price_ios}</small></td><td><span class="tag ${state[1]}">${state[0]}</span></td><td>${row.updated_at}</td><td><button class="action test-service" data-id="${row.id}">测试</button><button class="action edit-service" data-id="${row.id}">编辑</button><button class="action danger delete-service" data-id="${row.id}">删除</button></td></tr>` }).join('') || '<tr><td colspan="9" class="empty">暂无接口服务</td></tr>'}
       </tbody></table></div>
-    </div><div id="service-editor"></div>`
+    </div>${categoryPanel()}<div id="service-editor"></div>`
 
   $('#add-service').onclick = () => openServiceEditor(null)
   $('#content').onclick = async event => {
@@ -39,7 +45,17 @@ function renderServiceList() {
     toast('接口服务已删除')
     await loaders.services()
   }
+  bindCategoryActions()
 }
+
+function categoryPanel(){return `<div class="panel"><div class="panel-head"><div><h3>服务分类</h3><p class="hint">首页分类按这里的顺序展示；停用分类会同时从小程序隐藏该分类下全部服务。</p></div><button class="primary compact" id="add-category">新增分类</button></div><div class="table-wrap"><table><thead><tr><th>排序</th><th>分类名称</th><th>编码</th><th>服务数</th><th>状态</th><th>操作</th></tr></thead><tbody>${serviceCategories.map((row,index)=>`<tr><td><button class="action category-sort" data-id="${row.id}" data-move="-1" ${index===0?'disabled':''}>↑</button><button class="action category-sort" data-id="${row.id}" data-move="1" ${index===serviceCategories.length-1?'disabled':''}>↓</button></td><td><b>${escapeHtml(row.name)}</b></td><td><code>${escapeHtml(row.code)}</code></td><td>${row.service_count}</td><td><span class="tag ${Number(row.status)===1?'success':'wait'}">${Number(row.status)===1?'启用':'停用'}</span></td><td><button class="action edit-category" data-id="${row.id}">编辑</button><button class="action danger delete-category" data-id="${row.id}">删除</button></td></tr>`).join('')}</tbody></table></div></div>`}
+function bindCategoryActions(){
+  $('#add-category').onclick=()=>openCategoryEditor(null)
+  document.querySelectorAll('.edit-category').forEach(button=>button.onclick=()=>openCategoryEditor(serviceCategories.find(row=>String(row.id)===button.dataset.id)))
+  document.querySelectorAll('.delete-category').forEach(button=>button.onclick=async()=>{if(!confirm('确认删除该分类？分类下有服务时系统会拒绝删除。'))return;await api(`/service-categories/${button.dataset.id}`,{method:'DELETE'});toast('分类已删除');await loaders.services()})
+  document.querySelectorAll('.category-sort').forEach(button=>button.onclick=async()=>{const index=serviceCategories.findIndex(row=>String(row.id)===button.dataset.id),target=index+Number(button.dataset.move);if(target<0||target>=serviceCategories.length)return;[serviceCategories[index],serviceCategories[target]]=[serviceCategories[target],serviceCategories[index]];await api('/service-categories/sort',{method:'POST',data:{ids:serviceCategories.map(row=>row.id)}});await loaders.services()})
+}
+function openCategoryEditor(category){const item=category||{code:'',name:'',icon:'grid',status:1};$('#service-editor').innerHTML=`<div class="dialog-mask"><div class="dialog-card"><div class="drawer-head"><div><h3>${category?'编辑':'新增'}服务分类</h3><p>分类用于首页筛选与后台组织服务</p></div><button class="drawer-close">×</button></div><div class="dialog-body"><form id="category-form" class="form"><div class="form-grid"><label>分类编码<input name="code" value="${escapeHtml(item.code)}" ${category?'readonly':''} required></label><label>分类名称<input name="name" value="${escapeHtml(item.name)}" required></label><label>图标<select name="icon">${[['grid','全部'],['car','车辆'],['verified','核验'],['shield','保险'],['road','ETC'],['search','查询'],['document','档案']].map(x=>`<option value="${x[0]}" ${item.icon===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select></label><label>状态<select name="status"><option value="1" ${Number(item.status)===1?'selected':''}>启用</option><option value="0" ${Number(item.status)===0?'selected':''}>停用</option></select></label></div><div class="drawer-actions"><button type="button" class="secondary dialog-cancel">取消</button><button type="submit" class="primary">保存分类</button></div></form></div></div></div>`;const close=()=>$('#service-editor').innerHTML='';$('.drawer-close').onclick=close;$('.dialog-cancel').onclick=close;$('#category-form').onsubmit=async event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));data.status=Number(data.status);await api(category?`/service-categories/${category.id}`:'/service-categories',{method:'POST',data});close();toast('分类已保存');await loaders.services()}}
 
 function openServiceTest(service) {
   if (!service.api_url_configured) return toast('请先编辑并保存完整接口 URL')
@@ -84,18 +100,22 @@ async function moveService(button) {
 }
 
 function openServiceEditor(service) {
-  const item = service || {code:'',payment_product_id:'',name:'',short_name:'',description:'',icon:'',sale_price:'1.00',cost_price:'0.0000',sort:0,status:0,request_method:'GET',response_code_path:'code',response_success_value:'200',response_data_path:'data',input_schema:[{key:'',label:'',type:'text',required:true}],result_schema:[{key:'',label:''}]}
+  const item = service || {code:'',category_id:serviceCategories[0]?.id||'',payment_product_id_android:'',payment_product_id_ios:'',name:'',short_name:'',description:'',icon:'builtin:car',sale_price_android:'1.00',sale_price_ios:'1.00',cost_price:'0.0000',sort:0,status:0,request_method:'GET',response_code_path:'code',response_success_value:'200',response_data_path:'data',input_schema:[{key:'',label:'',type:'text',required:true}],result_schema:[{key:'',label:''}]}
   const currentIcon=serviceIconUrl(item.icon)
   $('#service-editor').innerHTML = `<div class="drawer-mask"><div class="service-drawer">
     <div class="drawer-head"><div><h3>${service?'编辑接口服务':'新增接口服务'}</h3><p>完整配置前端功能、供应商请求和结果展示规则</p></div><button class="drawer-close" type="button">×</button></div>
     <form id="service-form" class="form">
       <div class="form-section"><h4>前端服务信息</h4><div class="form-grid three">
         <label>服务编码<input name="code" value="${escapeHtml(item.code)}" placeholder="例如 owner_verify" ${service?'readonly':''} required>${service?'<small class="field-note">服务编码创建后不可修改</small>':''}</label>
-        <label>微信支付道具ID<input name="payment_product_id" value="${escapeHtml(item.payment_product_id||'')}" placeholder="与虚拟支付道具管理中的ID完全一致"><small class="field-note">必须先在微信虚拟支付“道具管理”中发布；微信道具价格必须与销售价一致</small></label>
+        <label>服务分类<select name="category_id" required>${serviceCategories.map(row=>`<option value="${row.id}" ${Number(item.category_id)===Number(row.id)?'selected':''}>${escapeHtml(row.name)}</option>`).join('')}</select></label>
+        <label>安卓支付道具ID<input name="payment_product_id_android" value="${escapeHtml(item.payment_product_id_android||'')}" placeholder="安卓/鸿蒙/Windows 道具ID"><small class="field-note">道具价格必须与安卓售价一致</small></label>
+        <label>iOS支付道具ID<input name="payment_product_id_ios" value="${escapeHtml(item.payment_product_id_ios||'')}" placeholder="Apple 支付道具ID"><small class="field-note">道具价格必须与iOS售价一致</small></label>
         <label>服务名称<input name="name" value="${escapeHtml(item.name)}" required></label>
         <label>前端简称<input name="short_name" value="${escapeHtml(item.short_name)}" required></label>
-        <label>服务图标<input name="icon_file" type="file" accept="image/png,image/jpeg,image/webp"><small class="field-note">${currentIcon?`<img class="service-icon-preview" src="${currentIcon}" alt="当前图标"> 当前图标；选择新文件后保存替换`:'PNG、JPG 或 WebP，32-1024像素，最大48KB'}</small></label>
-        <label>销售价（元）<input name="sale_price" type="number" min="1" step="0.01" value="${item.sale_price}" required><small class="field-note">正式运行的服务不得低于1元（Apple 支付最低金额）；需与微信道具价格一致</small></label>
+        <label>内置服务图标<select name="builtin_icon">${builtinIcons.map(icon=>`<option value="${icon[0]}" ${String(item.icon).replace(/^builtin:/,'')===icon[0]?'selected':''}>${icon[1]}</option>`).join('')}</select><small class="field-note">也可在下一项上传自定义图片覆盖</small></label>
+        <label>自定义图标<input name="icon_file" type="file" accept="image/png,image/jpeg,image/webp"><small class="field-note">${currentIcon?`<img class="service-icon-preview" src="${currentIcon}" alt="当前图标"> 当前图标；选择新文件后保存替换`:'PNG、JPG 或 WebP，32-1024像素，最大48KB'}</small></label>
+        <label>安卓售价（元）<input name="sale_price_android" type="number" min="1" step="0.01" value="${item.sale_price_android}" required></label>
+        <label>iOS售价（元）<input name="sale_price_ios" type="number" min="1" step="0.01" value="${item.sale_price_ios}" required><small class="field-note">Apple 支付最低1元，需与iOS道具价格一致</small></label>
         <label>成本价（元）<input name="cost_price" type="number" min="0" step="0.0001" value="${item.cost_price}" required></label>
         <label>接口状态<select name="status"><option value="0" ${Number(item.status)===0?'selected':''}>维护（前端可见，不可支付）</option><option value="1" ${Number(item.status)===1?'selected':''}>运行（正常查询支付）</option><option value="2" ${Number(item.status)===2?'selected':''}>隐藏（前端不显示）</option></select></label>
       </div><label>服务说明<textarea name="description" maxlength="255">${escapeHtml(item.description)}</textarea></label></div>

@@ -13,6 +13,7 @@ loaders.settings = async () => {
           <label>客服电话<input name="customer_service_phone" value="${escapeHtml(settings.customer_service_phone || '')}"></label>
           <label>客服时间<input name="customer_service_hours" value="${escapeHtml(settings.customer_service_hours || '')}"></label>
           <label>查询数据保留天数<input name="privacy_retention_days" type="number" min="1" max="365" value="${escapeHtml(settings.privacy_retention_days || 30)}"><small class="field-note">用于履约、异常排查和售后；到期由每日清理任务删除</small></label>
+          <label>后台访问地址<input name="admin_path" value="${escapeHtml(settings.admin_path || 'admin')}" pattern="[a-z][a-z0-9-]{2,31}" maxlength="32" required><small class="field-note">默认 admin；保存后仅可通过 /新地址/ 进入，根域名不会跳转后台</small></label>
         </div>
         <label>免责声明<textarea name="disclaimer">${escapeHtml(settings.disclaimer || '')}</textarea></label>
         <button class="primary" type="submit">保存运营设置</button>
@@ -39,6 +40,15 @@ loaders.settings = async () => {
       </form>
     </div>
     <div class="panel">
+      <div class="panel-head"><div><h3>安卓未查询到信息自动退款</h3><p class="hint">仅处理开启后发生的安卓已付款订单；iOS 订单仍由用户通过 Apple 官方渠道申请退款。</p></div></div>
+      <form id="android-auto-refund-settings" class="form">
+        <div class="form-grid">
+          <label>自动退款开关<select name="enabled"><option value="0" ${payment.android_auto_refund_query_failed !== '1' ? 'selected' : ''}>关闭</option><option value="1" ${payment.android_auto_refund_query_failed === '1' ? 'selected' : ''}>开启</option></select><small class="field-note">开启后，安卓订单未查询到信息将自动向微信发起原路退款；退款结果以微信异步处理状态为准。</small></label>
+        </div>
+        <button class="primary" type="submit">保存自动退款设置</button>
+      </form>
+    </div>
+    <div class="panel">
       <div class="panel-head"><div><h3>邮件通知</h3><p class="hint">配置 SMTP 发信服务，开启后系统将在关键事件发生时自动发送邮件通知。</p></div></div>
       <form id="email-settings" class="form">
         <div class="form-grid">
@@ -51,10 +61,16 @@ loaders.settings = async () => {
           <label>发件人名称<input name="smtp_from_name" value="${escapeHtml(email.smtp_from_name || '')}" placeholder="车辆查询系统"></label>
         </div>
         <div class="form-grid">
-          <label>每日营销推送<select name="email_notify_daily"><option value="0" ${email.email_notify_daily!=='1'?'selected':''}>关闭</option><option value="1" ${email.email_notify_daily==='1'?'selected':''}>开启</option></select><small class="field-note">每日统计订单、收入、利润等数据并邮件推送</small></label>
-          <label>支付成功通知<select name="email_notify_payment"><option value="0" ${email.email_notify_payment!=='1'?'selected':''}>关闭</option><option value="1" ${email.email_notify_payment==='1'?'selected':''}>开启</option></select><small class="field-note">用户完成支付后立即通知</small></label>
-          <label>查询成功通知<select name="email_notify_query_success"><option value="0" ${email.email_notify_query_success!=='1'?'selected':''}>关闭</option><option value="1" ${email.email_notify_query_success==='1'?'selected':''}>开启</option></select><small class="field-note">供应商查询成功后通知</small></label>
-          <label>查询异常通知<select name="email_notify_query_failed"><option value="0" ${email.email_notify_query_failed!=='1'?'selected':''}>关闭</option><option value="1" ${email.email_notify_query_failed==='1'?'selected':''}>开启</option></select><small class="field-note">供应商查询失败时立即告警</small></label>
+          <label>邮件通知总开关<select name="email_notify_enabled"><option value="0" ${email.email_notify_enabled!=='1'?'selected':''}>关闭</option><option value="1" ${email.email_notify_enabled==='1'?'selected':''}>开启</option></select><small class="field-note">一键关闭后不再产生或发送业务通知；测试邮件仍可使用</small></label>
+        </div>
+        <div class="form-section"><h4>通知事件</h4><p class="hint">勾选需要接收的事件。支付、查询、退款邮件都会标明 iOS 或安卓用户。</p>
+          <div class="email-event-list">
+            <label class="email-event"><input type="checkbox" name="email_event_payment_success" value="1" ${email.email_event_payment_success==='1'?'checked':''}><span><b>支付成功</b><small>微信服务端核验支付成功后通知</small></span></label>
+            <label class="email-event"><input type="checkbox" name="email_event_query_success" value="1" ${email.email_event_query_success==='1'?'checked':''}><span><b>查询成功</b><small>供应商结果保存成功后通知</small></span></label>
+            <label class="email-event"><input type="checkbox" name="email_event_query_failed" value="1" ${email.email_event_query_failed==='1'?'checked':''}><span><b>查询失败</b><small>包含供应商业务码、请求 ID 和具体失败原因</small></span></label>
+            <label class="email-event"><input type="checkbox" name="email_event_refund_result" value="1" ${email.email_event_refund_result==='1'?'checked':''}><span><b>退款结果</b><small>仅最终成功或失败时通知，包含退款金额</small></span></label>
+            <label class="email-event"><input type="checkbox" name="email_event_provider_balance" value="1" ${email.email_event_provider_balance==='1'?'checked':''}><span><b>接口余额</b><small>仅 missing_code 且失败原因为供应商余额不足时告警</small></span></label>
+          </div>
         </div>
         <label>收件人邮箱<textarea name="email_recipients" placeholder="每行一个邮箱，或用逗号分隔">${escapeHtml(email.email_recipients || '')}</textarea></label>
         <div class="form-actions-row">
@@ -77,8 +93,11 @@ loaders.settings = async () => {
 
   $('#general-settings').onsubmit = async event => {
     event.preventDefault()
-    await api('/settings', { method: 'POST', data: { settings: Object.fromEntries(new FormData(event.target)) } })
+    const values=Object.fromEntries(new FormData(event.target))
+    const oldPath=String(settings.admin_path||'admin')
+    const result=await api('/settings', { method: 'POST', data: { settings: values } })
     toast('运营设置已保存')
+    if(result?.admin_path&&result.admin_path!==oldPath){localStorage.removeItem('admin_token');setTimeout(()=>location.assign(`/${encodeURIComponent(result.admin_path)}/`),600)}
   }
   $('#payment-settings').onsubmit = async event => {
     event.preventDefault()
@@ -95,6 +114,13 @@ loaders.settings = async () => {
       button.disabled=false
       button.textContent=original
     }
+  }
+  $('#android-auto-refund-settings').onsubmit = async event => {
+    event.preventDefault()
+    const values=Object.fromEntries(new FormData(event.target))
+    await api('/android-auto-refund-settings', { method: 'POST', data: values })
+    toast(values.enabled==='1'?'安卓自动退款已开启':'安卓自动退款已关闭')
+    await loaders.settings()
   }
   $('#email-settings').onsubmit = async event => {
     event.preventDefault()

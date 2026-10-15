@@ -3,6 +3,7 @@ package cn.naiblog.carsearch.controller;
 import cn.naiblog.carsearch.api.ApiResponse;
 import cn.naiblog.carsearch.api.ApiSupport;
 import cn.naiblog.carsearch.api.BusinessException;
+import cn.naiblog.carsearch.config.CarProperties;
 import cn.naiblog.carsearch.security.CryptoService;
 import cn.naiblog.carsearch.security.CurrentUser;
 import cn.naiblog.carsearch.security.Hashing;
@@ -15,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.SecureRandom;
+import java.net.InetAddress;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -24,16 +26,18 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1")
 public class AuthController {
-    private final JdbcTemplate jdbc; private final ApiSupport api; private final CryptoService crypto; private final WechatLoginService wechat;
+    private final JdbcTemplate jdbc; private final ApiSupport api; private final CryptoService crypto; private final WechatLoginService wechat; private final CarProperties properties;
     private final SecureRandom random = new SecureRandom();
-    public AuthController(JdbcTemplate jdbc, ApiSupport api, CryptoService crypto, WechatLoginService wechat) {
-        this.jdbc = jdbc; this.api = api; this.crypto = crypto; this.wechat = wechat;
+    public AuthController(JdbcTemplate jdbc, ApiSupport api, CryptoService crypto, WechatLoginService wechat, CarProperties properties) {
+        this.jdbc = jdbc; this.api = api; this.crypto = crypto; this.wechat = wechat; this.properties = properties;
     }
 
     @PostMapping("/auth/login") @Transactional
     public ApiResponse<Map<String,Object>> login(@Valid @RequestBody LoginRequest body, HttpServletRequest request) {
         api.requireProtocol(request);
-        WechatLoginService.Session session = wechat.codeToSession(body.code().trim());
+        WechatLoginService.Session session = localDevelopmentLoginAllowed(request)
+                ? wechat.localDevelopmentSession()
+                : wechat.codeToSession(body.code().trim());
         LocalDateTime now = LocalDateTime.now();
         List<Map<String,Object>> rows = jdbc.queryForList("select * from ci_user where openid=? limit 1", session.openid());
         long userId;
@@ -80,6 +84,15 @@ public class AuthController {
     private String trimToLength(String value, int length) {
         String text = value == null ? "" : value.trim();
         return text.codePointCount(0, text.length()) <= length ? text : text.substring(0, text.offsetByCodePoints(0, length));
+    }
+
+    boolean localDevelopmentLoginAllowed(HttpServletRequest request) {
+        if (!properties.devLoginEnabled()) return false;
+        try {
+            return InetAddress.getByName(request.getRemoteAddr()).isLoopbackAddress();
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private Map<String,Object> safeUser(Map<String,Object> row) {

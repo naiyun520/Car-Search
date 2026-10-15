@@ -5,6 +5,7 @@ import cn.naiblog.carsearch.security.CryptoService;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import tools.jackson.databind.ObjectMapper;
+import cn.naiblog.carsearch.service.EmailNotificationService;
 
 import java.util.*;
 
@@ -19,7 +20,7 @@ class WechatRefundEventServiceTest {
         when(jdbc.queryForList(anyString(),any(Object[].class))).thenReturn(List.of());
         when(crypto.encrypt(any())).thenReturn("encrypted");
         when(settings.value(anyString(),anyString())).thenAnswer(i->i.getArgument(1));
-        WechatRefundEventService service=new WechatRefundEventService(jdbc,crypto,settings,new ObjectMapper());
+        WechatRefundEventService service=new WechatRefundEventService(jdbc,crypto,settings,new ObjectMapper(),mock(EmailNotificationService.class));
         Map<String,Object> response=service.handle(Map.of("Event","xpay_subscribe_ios_refund_query_notify","pay_order_id","missing","refund_request_reason","ITEM_NOT_RECEIVED","provide_status",0));
         assertThat(response).containsEntry("result_code",0);
         assertThat(response.get("evidence")).asString().contains("未找到");
@@ -32,7 +33,7 @@ class WechatRefundEventServiceTest {
         when(jdbc.query(anyString(),any(org.springframework.jdbc.core.RowMapper.class),any())).thenReturn(List.of());
         when(jdbc.queryForList(anyString(),any(Object[].class))).thenReturn(List.of());
         when(crypto.encrypt(any())).thenReturn("encrypted");
-        WechatRefundEventService service=new WechatRefundEventService(jdbc,crypto,settings,new ObjectMapper());
+        WechatRefundEventService service=new WechatRefundEventService(jdbc,crypto,settings,new ObjectMapper(),mock(EmailNotificationService.class));
         assertThat(service.handle(Map.of("Event","xpay_complaint_notify","ComplaintId","C1"))).containsEntry("ErrCode",0);
         verify(jdbc).update(contains("process_status=?"),any(Object[].class));
     }
@@ -49,7 +50,7 @@ class WechatRefundEventServiceTest {
         when(crypto.decrypt("snapshot")).thenReturn(Map.of("payment_product_id","PRODUCT-1"));
         when(crypto.encrypt(any())).thenReturn("encrypted");
         when(settings.value(anyString(),anyString())).thenAnswer(i->i.getArgument(1));
-        WechatRefundEventService service=new WechatRefundEventService(jdbc,crypto,settings,new ObjectMapper());
+        WechatRefundEventService service=new WechatRefundEventService(jdbc,crypto,settings,new ObjectMapper(),mock(EmailNotificationService.class));
 
         Map<String,Object> response=service.handle(Map.of("Event","xpay_subscribe_ios_refund_query_notify","pay_order_id","ORDER-10","channel_bill","APPLE-1","refund_time","1788254400","refund_request_reason","DID_NOT_LIKE","provide_status","1","product_id","PRODUCT-1"));
 
@@ -69,7 +70,7 @@ class WechatRefundEventServiceTest {
         when(crypto.decrypt("snapshot")).thenReturn(Map.of("payment_product_id","EXPECTED"));
         when(crypto.encrypt(any())).thenReturn("encrypted");
         when(settings.value(anyString(),anyString())).thenAnswer(i->i.getArgument(1));
-        WechatRefundEventService service=new WechatRefundEventService(jdbc,crypto,settings,new ObjectMapper());
+        WechatRefundEventService service=new WechatRefundEventService(jdbc,crypto,settings,new ObjectMapper(),mock(EmailNotificationService.class));
 
         Map<String,Object> response=service.handle(Map.of("Event","xpay_subscribe_ios_refund_query_notify","pay_order_id","ORDER-11","channel_bill","APPLE-2","refund_time","1788254400","provide_status",1,"product_id","OTHER"));
 
@@ -86,7 +87,7 @@ class WechatRefundEventServiceTest {
         when(jdbc.queryForList(startsWith("select o.id"),any(Object[].class))).thenReturn(List.of(row));
         when(jdbc.queryForList(startsWith("select id"),any(Object[].class))).thenReturn(List.of());
         when(crypto.encrypt(any())).thenReturn("encrypted");
-        WechatRefundEventService service=new WechatRefundEventService(jdbc,crypto,settings,new ObjectMapper());
+        WechatRefundEventService service=new WechatRefundEventService(jdbc,crypto,settings,new ObjectMapper(),mock(EmailNotificationService.class));
 
         Map<String,Object> response=service.handle(Map.of("Event","xpay_refund_notify","WxRefundId","WX-R-1","MchRefundId","R-1","MchOrderId","ORDER-12","OpenId","openid-12","RefundFee",199,"RetCode",0,"RefundSuccTimestamp",1788254400));
 

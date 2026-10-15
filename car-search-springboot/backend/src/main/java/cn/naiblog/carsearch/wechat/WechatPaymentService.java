@@ -2,6 +2,7 @@ package cn.naiblog.carsearch.wechat;
 
 import cn.naiblog.carsearch.config.SettingService;
 import org.springframework.stereotype.Service;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
@@ -9,6 +10,8 @@ import tools.jackson.databind.ObjectMapper;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -18,8 +21,14 @@ import java.util.Map;
 @Service
 public class WechatPaymentService {
     private final SettingService settings; private final ObjectMapper mapper;
-    private final RestClient client = RestClient.builder().baseUrl("https://api.weixin.qq.com").build();
-    public WechatPaymentService(SettingService settings, ObjectMapper mapper) { this.settings=settings; this.mapper=mapper; }
+    private final RestClient client;
+    public WechatPaymentService(SettingService settings, ObjectMapper mapper) {
+        this.settings=settings; this.mapper=mapper;
+        HttpClient httpClient=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        JdkClientHttpRequestFactory requestFactory=new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofSeconds(10));
+        this.client=RestClient.builder().baseUrl("https://api.weixin.qq.com").requestFactory(requestFactory).build();
+    }
 
     public Map<String,Object> queryOrder(String openid, String orderNo, int env) {
         Map<String,Object> result=xpay("/xpay/query_order", Map.of("openid",openid,"env",env,"order_id",orderNo), settings.wechat().withPayEnv(env), List.of(268490002));
@@ -31,8 +40,11 @@ public class WechatPaymentService {
         postWithoutPaySignature("/xpay/notify_provide_goods",Map.of("order_id",orderNo,"env",env));
     }
     public Map<String,Object> refund(String openid,String orderNo,String refundNo,int leftFee,int refundFee,String reason,int env) {
+        return refund(openid, orderNo, refundNo, leftFee, refundFee, reason, "1", env);
+    }
+    public Map<String,Object> refund(String openid,String orderNo,String refundNo,int leftFee,int refundFee,String reason,String requestFrom,int env) {
         Map<String,Object> payload = new LinkedHashMap<>(); payload.put("openid",openid); payload.put("order_id",orderNo); payload.put("refund_order_id",refundNo);
-        payload.put("left_fee",leftFee); payload.put("refund_fee",refundFee); payload.put("biz_meta","car-admin:"+orderNo); payload.put("refund_reason",reason); payload.put("req_from","1"); payload.put("env",env);
+        payload.put("left_fee",leftFee); payload.put("refund_fee",refundFee); payload.put("biz_meta","car-search:"+orderNo); payload.put("refund_reason",reason); payload.put("req_from",requestFrom); payload.put("env",env);
         return xpay("/xpay/refund_order",payload,settings.wechat().withPayEnv(env),List.of(268490004));
     }
 

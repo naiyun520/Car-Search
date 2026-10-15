@@ -2,8 +2,6 @@ package cn.naiblog.carsearch.service;
 
 import cn.naiblog.carsearch.config.SettingService;
 import jakarta.mail.internet.MimeMessage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
@@ -15,7 +13,6 @@ import java.util.regex.Pattern;
 
 @Service
 public class MailService {
-    private static final Logger log = LoggerFactory.getLogger(MailService.class);
     private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
     private final SettingService settings;
 
@@ -26,12 +23,6 @@ public class MailService {
     public List<String> recipients() {
         return Arrays.stream(settings.value("email_recipients", "").split("[,;\\r\\n]+"))
                 .map(String::trim).filter(s -> EMAIL.matcher(s).matches()).distinct().toList();
-    }
-
-    public void notifyAll(String subject, String html) {
-        if (!available()) return;
-        for (String recipient : recipients()) try { send(recipient, subject, html); }
-        catch (Exception error) { log.warn("email notify failed recipient={} subject={} message={}", recipient, subject, error.getMessage()); }
     }
 
     public void testConnection() throws Exception { sender().testConnection(); }
@@ -51,11 +42,6 @@ public class MailService {
 
     public String testTemplate() {
         return layout("SMTP 测试邮件", "<p>邮件服务配置正确，测试邮件已成功发送。</p><p>发送时间：" + LocalDateTime.now() + "</p>");
-    }
-
-    public String orderTemplate(String title, Map<String, Object> order, String detail) {
-        return layout(title, "<p>订单号：" + h(order.get("order_no")) + "</p><p>服务：" + h(order.get("service_name"))
-                + "</p><p>金额：¥" + h(order.get("amount")) + "</p><p>状态说明：" + h(detail) + "</p>");
     }
 
     public String layout(String title, String body) {

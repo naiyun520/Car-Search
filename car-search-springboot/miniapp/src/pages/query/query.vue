@@ -2,11 +2,10 @@
   <view class="page query-page" v-if="service">
     <view class="query-head">
       <view class="service-icon">
-        <image v-if="serviceIconUrl" :src="serviceIconUrl" mode="aspectFill" />
-        <view v-else class="default-service-icon"><view class="car-body" /><view class="wheel left" /><view class="wheel right" /></view>
+        <image :src="serviceIconUrl" mode="aspectFit" />
       </view>
       <view class="query-title">{{ service.name }}</view>
-      <view class="query-desc">{{ service.description }}</view>
+      <view class="query-desc">{{ service.category_name || '车辆信息服务' }}</view>
     </view>
     <view class="form-card card">
       <view class="field" v-for="field in service.input_schema" :key="field.key">
@@ -59,11 +58,12 @@
         <view>我已阅读并同意<text @click.stop="openAgreement">《用户授权协议》与《免责声明》</text>，确认已取得合法查询授权并承担合规使用责任。</view>
       </view>
     </view>
+    <view class="service-notice card"><view class="notice-icon">i</view><view><view class="notice-title">服务说明</view><view class="notice-text">{{ service.description || '请按页面要求提交真实、合法且已取得授权的查询信息。' }}</view></view></view>
     <view class="tips card">
       <view class="tips-title">查询须知</view>
-      <view>· 支付结果以微信服务器查单为准，客户端回调不会作为付款凭证</view>
+      <view>· 系统查询结果仅供参考，不构成任何法律效力</view>
       <view>· 支付成功后系统自动查询，请停留在当前页面等待结果</view>
-      <view>· 查询异常会保留付款订单，请凭订单号联系客服处理</view>
+      <view>· 未查询到信息时，系统会根据实际情况做出退款指引</view>
     </view>
     <view class="maintenance card" v-if="service.status===0">此功能维护中，请稍后再试</view>
     <view class="bottom-safe" />
@@ -86,10 +86,11 @@ import { onLoad, onShareAppMessage } from '@dcloudio/uni-app'
 import { CLIENT_VERSION, checkoutRequest, request } from '../../utils/request'
 import { API_BASE_URL } from '../../config'
 import { clearLogin, ensureLogin } from '../../utils/auth'
-import { delay, requestVirtualPayment } from '../../utils/payment'
+import { delay, paymentPlatform, requestVirtualPayment } from '../../utils/payment'
 import { hideLoading, showLoading } from '../../utils/loading'
 import PlateKeyboard from '../../components/plate-keyboard/plate-keyboard.vue'
 import PlateInput from '../../components/plate-input/plate-input.vue'
+import { serviceIcon } from '../../utils/service-icons'
 
 // 分享配置
 onShareAppMessage(() => ({
@@ -117,10 +118,8 @@ const mixedPlateRefs = reactive({})
 const inputMode = reactive({})
 
 const serviceIconUrl = computed(() => {
-  const filename=String(service.value?.icon||'')
-  return /^[a-f0-9]{32}\.(?:png|jpg|webp)$/.test(filename) ? `${API_BASE_URL}/service-icon/${filename}` : ''
+  return serviceIcon(service.value?.icon,API_BASE_URL)
 })
-
 onLoad(async options => {
   try {
     const selected = uni.getStorageSync('selected_query_service') || null
@@ -230,7 +229,7 @@ async function submit() {
     const checkoutPath = `/checkout/create?service_code=${encodeURIComponent(serviceCode)}&request_key=${encodeURIComponent(requestKey)}`
     const created = await checkoutRequest(checkoutPath, {
       method:'POST', serviceCode:service.value.code, idempotencyKey:requestKey,
-      data:{ service_code:serviceCode, request_key:requestKey, input:form.value, accepted:true }
+      data:{ service_code:serviceCode, request_key:requestKey, client_platform:paymentPlatform(), input:form.value, accepted:true }
     })
     const orderNo = created.order.order_no
     saveFlow({ request_key:requestKey, order_no:orderNo, service_code:service.value.code, stage:'payment' })
@@ -247,7 +246,7 @@ async function submit() {
 }
 
 async function paymentParams(orderNo) {
-  return checkoutRequest('/checkout/payment', { method:'POST', orderNo, data:{ order_no:orderNo } })
+  return checkoutRequest('/checkout/payment', { method:'POST', orderNo, data:{ order_no:orderNo, client_platform:paymentPlatform() } })
 }
 
 async function pay(orderNo, payment, retried=false) {
@@ -285,7 +284,8 @@ async function confirmAndFulfil(orderNo) {
     try {
       const order = await checkoutRequest('/checkout/confirm', { method:'POST', orderNo, data:{ order_no:orderNo } })
       if (order.status === 'success') return finish(orderNo)
-      if (order.status === 'paid' || order.status === 'querying' || order.status === 'query_failed') return fulfil(orderNo, order)
+      if (order.status === 'query_failed') return finish(orderNo)
+      if (order.status === 'paid' || order.status === 'querying') return fulfil(orderNo, order)
       if (order.status === 'payment_review') throw finalError(order.message)
       if (order.status === 'cancelled' || order.status === 'refunded') throw finalError(statusMessage(order))
     } catch (error) {
@@ -310,12 +310,12 @@ async function fulfil(orderNo, current=null) {
     try {
       order = await checkoutRequest('/checkout/query', { method:'POST', orderNo, data:{ order_no:orderNo }, timeout:40000 })
     } catch (error) {
-      throw contactError(orderNo, '查询请求未完成，请联系客服处理')
+      throw contactError(orderNo, '结果仍在确认中，请凭订单号联系客服核验')
     }
   }
   if (order.status === 'success') return finish(orderNo)
   if (order.status === 'payment_review') throw finalError(order.message)
-  if (order.status === 'query_failed') throw contactError(orderNo, order.message)
+  if (order.status === 'query_failed') return finish(orderNo)
   return poll(orderNo)
 }
 
@@ -326,7 +326,7 @@ async function poll(orderNo) {
     const order = await checkoutRequest('/checkout/status', { orderNo })
     if (order.status === 'success') return finish(orderNo)
     if (order.status === 'paid') return fulfil(orderNo, order)
-    if (order.status === 'query_failed') throw contactError(orderNo, order.message)
+    if (order.status === 'query_failed') return finish(orderNo)
     if (['payment_review','cancelled','refunded'].includes(order.status)) throw finalError(order.message || statusMessage(order))
   }
   throw contactError(orderNo, '订单仍在处理中，请凭订单号联系客服核验')
@@ -342,7 +342,7 @@ async function resumePaidFlow(orderNo) {
       return
     }
     if (order.status === 'paid' || order.status === 'querying') return fulfil(orderNo, order)
-    if (order.status === 'query_failed') throw contactError(orderNo, order.message)
+    if (order.status === 'query_failed') return finish(orderNo)
     throw finalError(order.message || statusMessage(order))
   } catch (error) {
     await handleFlowError(error)
@@ -363,16 +363,15 @@ async function handleFlowError(error) {
   if (!error.preserveFlow) clearFlow()
   if (error.contact) {
     return uni.showModal({
-      title:'查询未成功', content:`${error.message}\n订单号：${error.orderNo}`,
-      confirmText:'联系客服', cancelText:'关闭', showCancel:true,
-      success:result=>{ if (result.confirm) openFeedback(error.orderNo) }
+      title:'结果确认中', content:`${error.message}\n订单号：${error.orderNo}`,
+      confirmText:'前往客服', cancelText:'关闭', showCancel:true,
+      success:result=>{ if (result.confirm) uni.switchTab({ url:'/pages/my/my' }) }
     })
   }
   uni.showModal({ title:'提示', content:error.message || '请求处理失败，请稍后重试', showCancel:false })
 }
 function finalError(message) { const error = new Error(message); error.final = true; return error }
-function contactError(orderNo, message) { const error = finalError(message || '查询未成功，请联系客服处理'); error.contact = true; error.orderNo = orderNo; return error }
-function openFeedback(orderNo) { uni.navigateTo({ url:`/pages/feedback/feedback?order_no=${encodeURIComponent(orderNo)}` }) }
+function contactError(orderNo, message) { const error = finalError(message || '结果仍在确认中，请凭订单号联系客服核验'); error.contact = true; error.orderNo = orderNo; return error }
 function isTransientRequestError(error) {
   if (error?.network) return true
   const status = Number(error?.statusCode || 0)
@@ -389,7 +388,7 @@ function clearFlow() { uni.removeStorageSync(FLOW_KEY) }
 </script>
 
 <style lang="scss" scoped>
-.query-page{padding-bottom:150rpx}.query-head{text-align:center;padding:55rpx 35rpx 48rpx;background:linear-gradient(180deg,#eaf3ff,#f4f7fb)}.service-icon{width:98rpx;height:98rpx;border-radius:25rpx;background:#e8f1ff;display:flex;align-items:center;justify-content:center;margin:auto;overflow:hidden}.service-icon image{width:100%;height:100%}.default-service-icon{width:66rpx;height:50rpx;position:relative}.car-body{position:absolute;left:6rpx;right:6rpx;top:14rpx;height:26rpx;border:5rpx solid #175cd3;border-radius:12rpx 12rpx 7rpx 7rpx}.car-body::before{content:"";position:absolute;left:10rpx;right:10rpx;top:-16rpx;height:17rpx;border:5rpx solid #175cd3;border-bottom:0;border-radius:12rpx 12rpx 0 0}.wheel{position:absolute;width:10rpx;height:10rpx;background:#175cd3;border-radius:50%;bottom:0}.wheel.left{left:14rpx}.wheel.right{right:14rpx}.query-title{font-size:38rpx;font-weight:800;margin-top:20rpx}.query-desc{font-size:24rpx;color:#718097;margin-top:10rpx}.form-card{margin:0 24rpx;padding:6rpx 30rpx}.field{padding:30rpx 0;border-bottom:1rpx solid #edf0f5}.field:last-of-type{border-bottom:0}.label{font-size:27rpx;font-weight:600;margin-bottom:18rpx}.label text{color:#e3483e}.field input{height:86rpx;border-radius:14rpx;background:#f6f8fb;padding:0 22rpx;font-size:28rpx}.field-tip{font-size:21rpx;color:#8d98a9;margin-top:12rpx}.authorization{display:flex;gap:14rpx;padding:28rpx 0;color:#68758a;font-size:23rpx;line-height:1.65}.authorization text{color:#175cd3}.check{width:34rpx;height:34rpx;flex:none;margin-top:2rpx;border:2rpx solid #b7c2d1;border-radius:7rpx;display:flex;align-items:center;justify-content:center}.checked{color:#fff;background:#175cd3;border-color:#175cd3}.tips{margin:24rpx;padding:28rpx;color:#758297;font-size:23rpx;line-height:1.9}.tips-title{font-size:27rpx;color:#344158;font-weight:700;margin-bottom:8rpx}.maintenance{margin:24rpx;padding:24rpx;text-align:center;background:#fff7e8;color:#9d6200;font-size:25rpx;font-weight:600}.pay-bar{position:fixed;bottom:0;left:0;right:0;height:130rpx;padding:18rpx 24rpx calc(18rpx + env(safe-area-inset-bottom));background:#fff;box-shadow:0 -8rpx 25rpx rgba(29,49,80,.08);display:flex;align-items:center}.pay-btn{width:100%;height:88rpx;line-height:88rpx;margin:0;border-radius:16rpx;background:#175cd3;color:#fff;font-size:29rpx;font-weight:700}.pay-btn.disabled{background:#aab3c0}
+.query-page{padding-bottom:170rpx}.query-head{text-align:center;padding:55rpx 35rpx 48rpx;background:linear-gradient(180deg,#eaf3ff,#f4f7fb)}.service-icon{width:98rpx;height:98rpx;border-radius:25rpx;background:#e8f1ff;padding:18rpx;display:flex;align-items:center;justify-content:center;margin:auto}.service-icon image{width:100%;height:100%}.query-title{font-size:38rpx;font-weight:800;margin-top:20rpx}.query-desc{font-size:24rpx;color:#718097;margin-top:10rpx}.form-card{margin:0 24rpx;padding:6rpx 30rpx}.field{padding:30rpx 0;border-bottom:1rpx solid #edf0f5}.field:last-of-type{border-bottom:0}.label{font-size:27rpx;font-weight:600;margin-bottom:18rpx}.label text{color:#e3483e}.field input{height:86rpx;border-radius:14rpx;background:#f6f8fb;padding:0 22rpx;font-size:28rpx}.field-tip{font-size:21rpx;color:#8d98a9;margin-top:12rpx}.authorization{display:flex;gap:14rpx;padding:28rpx 0;color:#68758a;font-size:23rpx;line-height:1.65}.authorization text{color:#175cd3}.check{width:34rpx;height:34rpx;flex:none;margin-top:2rpx;border:2rpx solid #b7c2d1;border-radius:7rpx;display:flex;align-items:center;justify-content:center}.checked{color:#fff;background:#175cd3;border-color:#175cd3}.service-notice{margin:24rpx;padding:27rpx;display:flex;gap:18rpx;border:1rpx solid #bdd9ff;background:linear-gradient(135deg,#edf6ff,#fff)}.notice-icon{width:46rpx;height:46rpx;border-radius:50%;background:#176bdf;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;flex:none}.notice-title{font-size:27rpx;font-weight:750;color:#135abd}.notice-text{font-size:23rpx;color:#4f6380;line-height:1.7;margin-top:8rpx}.tips{margin:24rpx;padding:28rpx;color:#758297;font-size:23rpx;line-height:1.9}.tips-title{font-size:27rpx;color:#344158;font-weight:700;margin-bottom:8rpx}.maintenance{margin:24rpx;padding:24rpx;text-align:center;background:#fff7e8;color:#9d6200;font-size:25rpx;font-weight:600}.pay-bar{position:fixed;z-index:30;bottom:0;left:0;right:0;min-height:130rpx;padding:18rpx 24rpx calc(18rpx + env(safe-area-inset-bottom));background:#fff;box-shadow:0 -8rpx 25rpx rgba(29,49,80,.1);display:flex;align-items:center}.pay-btn{width:100%;height:88rpx;line-height:88rpx;margin:0;border-radius:16rpx;background:#175cd3;color:#fff;font-size:29rpx;font-weight:700}.pay-btn.disabled{background:#aab3c0}
 
 /* 混合输入（车牌/VIN）样式 */
 .mixed-input-wrap {

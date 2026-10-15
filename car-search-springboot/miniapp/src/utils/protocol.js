@@ -1,1 +1,1 @@
-export const CLIENT_VERSION = '20260815.2'
+export const CLIENT_VERSION = '20260921.1'

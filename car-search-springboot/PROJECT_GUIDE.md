@@ -9,7 +9,7 @@
 3. `miniapp/` 是 Vue 3 + UniApp 微信小程序端。
 4. 新后端直接兼容原系统的 MySQL `ci_*` 表、接口协议和 AES-256-GCM 密文，不会自动建表或改表。
 5. 小程序公开 API 前缀是 `/api/v1`，管理 API 前缀是 `/admin-api`，微信消息入口是 `/wechat/message`。
-6. 客户端协议版本当前为 `20260815.2`，统一响应结构为 `{ code, message, data }`。
+6. 客户端协议版本当前为 `20260921.1`，统一响应结构为 `{ code, message, data }`。
 7. 当前版本已完成代码迁移和本地验收，生产切换状态以 `MIGRATION.md` 及本文“当前完成度”章节为准。
 
 ## 2. 顶层目录与文件
@@ -82,12 +82,10 @@ car-search-springboot/
 3. `AuthController.java`：微信 code 登录、当前用户信息、资料更新和退出登录。
 4. `CheckoutController.java`：创建订单、查询订单状态、获取支付参数、确认/恢复支付以及触发查询。
 5. `OrderController.java`：当前用户的历史订单列表与订单详情。
-6. `FeedbackController.java`：用户提交反馈、查看反馈列表和详情。
-7. `AdminController.java`：管理员登录/退出、仪表盘、财务统计、用户、公告、通用设置、支付设置、邮件设置和审计记录。
-8. `AdminOrderController.java`：管理端订单列表/详情、支付同步、查询重试、发货、在线退款、iOS 手动退款、受限批量删除和微信消息归档查询。
-9. `ServiceAdminController.java`：查询服务配置、创建/修改/排序/删除服务、上传图标和测试上游供应商接口。
-10. `FeedbackAdminController.java`：管理端反馈列表/详情、回复和删除。
-11. `WechatMessageController.java`：验证微信消息回调 URL，并接收安全模式 AES JSON 消息。
+6. `AdminController.java`：管理员登录/退出、仪表盘、财务统计、用户、公告、通用设置、支付设置、邮件设置和审计记录。
+7. `AdminOrderController.java`：管理端订单列表/详情、支付同步、查询重试、发货、在线退款、iOS 手动退款、受限批量删除和微信消息归档查询。
+8. `ServiceAdminController.java`：查询服务配置、创建/修改/排序/删除服务、上传图标和测试上游供应商接口。
+9. `WechatMessageController.java`：验证微信消息回调 URL，并接收安全模式 AES JSON 消息。
 
 ### 3.6 `service/`：核心业务
 
@@ -101,7 +99,7 @@ car-search-springboot/
 8. `PaymentDeliveryService.java`：查询完成后向微信确认虚拟商品已发货。
 9. `PaymentLifecycleService.java`：串联支付确认、发货、退款申请和退款状态核对。
 10. `AuditService.java`：记录管理员敏感操作审计日志。
-11. `MailService.java`：发送反馈回复等业务邮件。
+11. `MailService.java`：发送订单异常通知和系统业务邮件。
 12. `MaintenanceScheduler.java`：执行支付对账、查询恢复、过期数据清理等周期任务。
 
 ### 3.7 `wechat/`：微信平台适配
@@ -119,13 +117,12 @@ car-search-springboot/
 4. `static/admin/dashboard.js`：仪表盘和财务图表。
 5. `static/admin/services.js`：查询服务配置管理。
 6. `static/admin/settings.js`：通用、支付和邮件配置页面逻辑。
-7. `static/admin/feedback.js`：反馈管理页面逻辑。
-8. `static/admin/errors.js`：错误展示与转换。
-9. `static/admin/style.css`、`enhancements.css`：管理后台样式。
-10. `static/admin/echarts.min.js`：仪表盘图表依赖。
-11. `backend/src/test/.../CryptoServiceTest.java`：验证 PHP 兼容加密格式。
-12. `WechatMessageCryptoServiceTest.java`：验证微信消息安全模式加解密。
-13. `WechatRefundEventServiceTest.java`：验证微信退款事件处理的部分逻辑。
+7. `static/admin/errors.js`：错误展示与转换。
+8. `static/admin/style.css`、`enhancements.css`：管理后台样式。
+9. `static/admin/echarts.min.js`：仪表盘图表依赖。
+10. `backend/src/test/.../CryptoServiceTest.java`：验证 PHP 兼容加密格式。
+11. `WechatMessageCryptoServiceTest.java`：验证微信消息安全模式加解密。
+12. `WechatRefundEventServiceTest.java`：验证微信退款事件处理的部分逻辑。
 
 ## 4. 小程序结构与职责
 
@@ -148,9 +145,8 @@ car-search-springboot/
 2. `query/query.vue`：按服务输入定义收集车牌号等查询参数，创建订单并发起支付/查询流程。
 3. `result/result.vue`：轮询或读取订单状态，展示标准化查询结果和失败信息。
 4. `orders/orders.vue`：展示当前用户历史订单。
-5. `feedback/feedback.vue`：提交投诉建议并查看回复记录。
-6. `agreement/agreement.vue`：展示服务协议、隐私规则和免责声明。
-7. `my/my.vue`：个人中心、用户资料、订单/反馈入口和退出登录。
+5. `agreement/agreement.vue`：展示服务协议、隐私规则和免责声明。
+6. `my/my.vue`：个人中心、用户资料、订单、在线客服和协议入口。
 
 ### 4.3 组件 `components/`
 
@@ -188,11 +184,11 @@ car-search-springboot/
 8. 查询成功后，加密保存原始/标准化结果，将订单置为 `success`，并向微信确认发货。
 9. 超时、客户端退出或回调丢失时，通过 `/checkout/status`、`/checkout/recoverable` 和后台对账任务恢复。
 
-### 5.3 反馈
+### 5.3 售后与客服
 
-1. 用户通过 `/api/v1/feedback` 提交和查看反馈。
-2. 管理员通过 `/admin-api/feedback*` 查看、回复或删除。
-3. 配置 SMTP 后，后台回复可由 `MailService` 发送邮件。
+1. 项目自建的投诉意见页面、管理页面和 `/api/v1/feedback*`、`/admin-api/feedback*` 接口已经下线。
+2. 用户通过个人中心的微信在线客服入口联系运营人员。
+3. 微信虚拟支付平台的 `xpay_complaint_notify` 属于官方支付消息，仍由消息入口接收并加密归档，不受自建投诉意见模块下线影响。
 
 ### 5.4 微信消息、退款和发货
 
@@ -201,12 +197,13 @@ car-search-springboot/
 3. 后端校验签名并解密 AES JSON，不接受明文业务消息。
 4. 事件请求和处理结果加密归档到 `ci_wechat_event`，重复事件按事件键幂等处理。
 5. 管理后台可查看消息、重试发货、发起/核对退款；iOS 退款事件流程仍需补齐真实状态机测试。
+6. 支付设置提供“安卓未查询到信息自动退款”开关，默认关闭；首次开启后只处理新发生的安卓已付款失败订单。自动任务沿用同一退款单号并异步查单，最多尝试3次、间隔不少于10分钟。iOS 不走开发者主动退款，前端引导用户参考 Apple 官方说明。
 
 ## 6. API 分组速查
 
 1. 公开接口：`GET /api/v1/bootstrap`、`GET /api/v1/service-icon/{file}`、`POST /api/v1/auth/login`。
-2. 用户接口：`/api/v1/me`、`/api/v1/orders*`、`/api/v1/feedback*`、`/api/v1/checkout/*`、`POST /api/v1/auth/logout`。
-3. 管理接口：`/admin-api/login`、仪表盘、用户、订单、服务、公告、反馈、审计、通用/支付/邮件设置。
+2. 用户接口：`/api/v1/me`、`/api/v1/orders*`、`/api/v1/checkout/*`、`POST /api/v1/auth/logout`。
+3. 管理接口：`/admin-api/login`、仪表盘、用户、订单、服务、公告、审计、通用/支付/邮件设置。
 4. 微信入口：`GET|POST /wechat/message`。
 5. 运维入口：`GET /actuator/health`、`GET /actuator/info`。
 6. 完整请求字段和响应字段应直接查看相应 Controller、Service 以及项目根目录的 `api接口详情.md`；开发时不要只依赖本节摘要。
@@ -221,7 +218,7 @@ car-search-springboot/
 6. `ci_service`：查询服务、输入/输出 Schema、价格、支付商品 ID、供应商请求及解析配置。
 7. `ci_order`：业务订单、用户归属、服务快照、金额、状态、加密输入和结果。
 8. `ci_payment`：微信支付单、支付/退款/发货状态及平台响应。
-9. `ci_feedback`：用户反馈、联系方式、处理状态和回复。
+9. `ci_feedback`：已下线自建反馈功能的历史数据表；程序不再读写，暂时保留以避免不可逆删除存量记录。
 10. `ci_announcement`：小程序公告、展示时间和抑制周期。
 11. `ci_setting`：普通业务配置。
 12. `ci_secure_setting`：微信 AppSecret/AppKey、消息密钥、SMTP 密码等加密配置。
@@ -299,7 +296,7 @@ cd ..\miniapp
 npm run build:mp-weixin
 ```
 
-1. `test-local.ps1` 检查健康状态、静态管理台、公开接口、鉴权、订单/反馈响应和敏感字段泄露。
+1. `test-local.ps1` 检查健康状态、静态管理台、公开接口、鉴权、订单响应、已下线反馈接口和敏感字段泄露。
 2. 传入 `-AdminUsername`、`-AdminPassword` 后会增加管理 API 登录态检查。
 3. 微信登录、支付、退款、消息和发货仍需在具有真实权限与配置的开发版/体验版环境回归。
 

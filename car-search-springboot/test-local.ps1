@@ -8,7 +8,7 @@ Add-Type -AssemblyName System.Net.Http
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Mysql = 'E:\mySQL\bin\mysql.exe'
 $Base = 'http://127.0.0.1:8080'
-$Protocol = '20260815.2'
+$Protocol = '20260921.1'
 $Passed = 0
 $LocalEnvironment = @{}
 Get-Content -LiteralPath (Join-Path $Root '.env.local') | ForEach-Object {
@@ -60,13 +60,36 @@ function Get-Status([string]$Path, [hashtable]$Headers = @{}) {
 if (-not (Test-Path -LiteralPath $Mysql)) { throw "MySQL client not found: $Mysql" }
 $Health = Invoke-RestMethod -Uri "$Base/actuator/health" -TimeoutSec 10
 Assert-True ($Health.status -eq 'UP') 'Spring Boot health is UP'
-Assert-True ((Get-Status '/') -eq 302) 'Root redirects to admin console'
-Assert-True ((Get-Status '/admin/') -eq 200) 'Admin static application is available'
+$ConfiguredAdminPath = (& $Mysql @MysqlConnection --batch --skip-column-names --execute='select value from ci_setting where `key`=''admin_path'' limit 1').Trim()
+if (-not $ConfiguredAdminPath) { $ConfiguredAdminPath = 'admin' }
+Assert-True ((Get-Status '/') -eq 404) 'Root domain does not expose or redirect to admin console'
+Assert-True ((Get-Status "/$ConfiguredAdminPath") -eq 404) 'Admin console requires the configured path with trailing slash'
+Assert-True ((Get-Status "/$ConfiguredAdminPath/") -eq 200) 'Admin static application is available'
 Assert-True ((Get-Status '/route-that-must-not-exist') -eq 404) 'Unknown route returns HTTP 404'
+
+$TemporaryAdminPath = 'contract-admin'
+try {
+    & $Mysql @MysqlConnection --execute="insert into ci_setting(``key``,value,updated_at) values('admin_path','$TemporaryAdminPath',now()) on duplicate key update value=values(value),updated_at=values(updated_at)" | Out-Null
+    Assert-True ((Get-Status "/$ConfiguredAdminPath/") -eq 404) 'Changing admin path immediately disables the old address'
+    Assert-True ((Get-Status "/$TemporaryAdminPath/") -eq 200) 'Changing admin path immediately enables the new address'
+} finally {
+    & $Mysql @MysqlConnection --execute="update ci_setting set value='$ConfiguredAdminPath',updated_at=now() where ``key``='admin_path'" | Out-Null
+}
 
 $Bootstrap = Invoke-Api GET '/api/v1/bootstrap'
 Assert-True ($Bootstrap.code -eq 0 -and $Bootstrap.data.services.Count -gt 0) 'Bootstrap returns enabled services'
+Assert-True ($Bootstrap.data.categories.Count -gt 0 -and $null -ne $Bootstrap.data.services[0].sale_price_ios) 'Bootstrap returns categories and per-platform prices'
 Assert-True ((Get-Status '/api/v1/me') -eq 401) 'Protected user API rejects anonymous request'
+
+if ([string]$LocalEnvironment.CAR_DEV_LOGIN_ENABLED -eq 'true') {
+    $DevLogin = Invoke-Api POST '/api/v1/auth/login' @{ 'X-Car-Client-Version' = $Protocol } @{ code = 'local-integration-test' }
+    Assert-True ($DevLogin.code -eq 0 -and $DevLogin.data.token -and $DevLogin.data.user.id) 'Loopback-only development login creates a local session'
+    $DevHeaders = @{ Authorization = "Bearer $($DevLogin.data.token)"; 'X-Car-Client-Version' = $Protocol }
+    $DevMe = Invoke-Api GET '/api/v1/me' $DevHeaders
+    Assert-True ($DevMe.code -eq 0 -and "$($DevMe.data.id)" -eq "$($DevLogin.data.user.id)") 'Development login can open the My page API'
+    $DevLogout = Invoke-Api POST '/api/v1/auth/logout' $DevHeaders @{}
+    Assert-True ($DevLogout.code -eq 0) 'Development login token can be revoked'
+}
 
 $UserId = (& $Mysql @MysqlConnection --batch --skip-column-names --execute="select id from ci_user where status=1 order by id limit 1").Trim()
 Assert-True ($UserId -match '^\d+$') 'A local active test user exists'
@@ -82,8 +105,7 @@ try {
         $SerializedOrder = $Orders.data.data[0] | ConvertTo-Json -Depth 8 -Compress
         Assert-True (-not $SerializedOrder.Contains('input_cipher') -and -not $SerializedOrder.Contains('result_cipher')) 'User order response does not expose encrypted sensitive columns'
     }
-    $Feedback = Invoke-Api GET '/api/v1/feedback?page=1' $UserHeaders
-    Assert-True ($Feedback.code -eq 0 -and $null -ne $Feedback.data.data) 'User feedback list contract is valid'
+    Assert-True ((Get-Status '/api/v1/feedback' $UserHeaders) -eq 404) 'Removed user feedback API is unavailable'
     $Logout = Invoke-Api POST '/api/v1/auth/logout' $UserHeaders @{}
     Assert-True ($Logout.code -eq 0) 'User logout succeeds'
     Assert-True ((Get-Status '/api/v1/me' $UserHeaders) -eq 401) 'Logged-out user token is immediately revoked'
@@ -98,14 +120,18 @@ if ($AdminUsername -and $AdminPassword) {
     $Login = Invoke-Api POST '/admin-api/login' @{} @{ username = $AdminUsername; password = $AdminPassword }
     Assert-True ($Login.code -eq 0 -and $Login.data.token) 'Administrator login uses JSON body and returns a token'
     $AdminHeaders = @{ Authorization = "Bearer $($Login.data.token)" }
-    foreach ($Path in @('/admin-api/dashboard','/admin-api/dashboard-finance','/admin-api/users?page=1','/admin-api/orders?page=1','/admin-api/wechat-messages?page=1','/admin-api/services','/admin-api/announcements','/admin-api/settings','/admin-api/payment-settings','/admin-api/email-settings','/admin-api/feedback?page=1')) {
+    Assert-True ((Get-Status '/admin-api/feedback' $AdminHeaders) -eq 404) 'Removed admin feedback API is unavailable'
+    foreach ($Path in @('/admin-api/dashboard','/admin-api/dashboard-finance','/admin-api/users?page=1','/admin-api/orders?page=1','/admin-api/wechat-messages?page=1','/admin-api/services','/admin-api/service-categories','/admin-api/encryption-health','/admin-api/announcements','/admin-api/settings','/admin-api/payment-settings','/admin-api/email-settings')) {
         $Response = Invoke-Api GET $Path $AdminHeaders
         Assert-True ($Response.code -eq 0) "Admin endpoint $Path succeeds"
     }
     $ServiceJson = (Invoke-Api GET '/admin-api/services' $AdminHeaders).data | ConvertTo-Json -Depth 8 -Compress
     Assert-True (-not $ServiceJson.Contains('request_url_cipher')) 'Admin service response does not expose encrypted provider URL storage'
+    $PaymentSettings = (Invoke-Api GET '/admin-api/payment-settings' $AdminHeaders).data
+    Assert-True ($null -ne $PaymentSettings.PSObject.Properties['android_auto_refund_query_failed']) 'Admin payment settings expose the Android automatic-refund switch'
     $MailJson = (Invoke-Api GET '/admin-api/email-settings' $AdminHeaders).data | ConvertTo-Json -Depth 8 -Compress
     Assert-True (-not $MailJson.Contains('smtp_password_cipher')) 'Admin email settings do not expose SMTP password ciphertext'
+    Assert-True ($MailJson.Contains('email_notify_enabled') -and $MailJson.Contains('email_event_refund_result') -and $MailJson.Contains('email_event_provider_balance')) 'Admin email settings expose the master switch and event selections'
     $AdminLogout = Invoke-Api POST '/admin-api/logout' $AdminHeaders @{}
     Assert-True ($AdminLogout.code -eq 0) 'Administrator logout succeeds'
 } else {
@@ -117,14 +143,18 @@ if ($AdminUsername -and $AdminPassword) {
         & $Mysql @MysqlConnection --execute="insert into ci_admin_token(admin_id,token_hash,expires_at,created_at) values($AdminId,sha2('$AdminToken',256),date_add(now(),interval 10 minute),now())" | Out-Null
         $AdminHeaders = @{ Authorization = "Bearer $AdminToken" }
         try {
-            foreach ($Path in @('/admin-api/dashboard','/admin-api/dashboard-finance','/admin-api/users?page=1','/admin-api/orders?page=1','/admin-api/wechat-messages?page=1','/admin-api/services','/admin-api/announcements','/admin-api/settings','/admin-api/payment-settings','/admin-api/email-settings','/admin-api/feedback?page=1')) {
+            Assert-True ((Get-Status '/admin-api/feedback' $AdminHeaders) -eq 404) 'Removed admin feedback API is unavailable'
+            foreach ($Path in @('/admin-api/dashboard','/admin-api/dashboard-finance','/admin-api/users?page=1','/admin-api/orders?page=1','/admin-api/wechat-messages?page=1','/admin-api/services','/admin-api/service-categories','/admin-api/encryption-health','/admin-api/announcements','/admin-api/settings','/admin-api/payment-settings','/admin-api/email-settings')) {
                 $Response = Invoke-Api GET $Path $AdminHeaders
                 Assert-True ($Response.code -eq 0) "Admin endpoint $Path succeeds"
             }
             $ServiceJson = (Invoke-Api GET '/admin-api/services' $AdminHeaders).data | ConvertTo-Json -Depth 8 -Compress
             Assert-True (-not $ServiceJson.Contains('request_url_cipher')) 'Admin service response does not expose encrypted provider URL storage'
+            $PaymentSettings = (Invoke-Api GET '/admin-api/payment-settings' $AdminHeaders).data
+            Assert-True ($null -ne $PaymentSettings.PSObject.Properties['android_auto_refund_query_failed']) 'Admin payment settings expose the Android automatic-refund switch'
             $MailJson = (Invoke-Api GET '/admin-api/email-settings' $AdminHeaders).data | ConvertTo-Json -Depth 8 -Compress
             Assert-True (-not $MailJson.Contains('smtp_password_cipher')) 'Admin email settings do not expose SMTP password ciphertext'
+            Assert-True ($MailJson.Contains('email_notify_enabled') -and $MailJson.Contains('email_event_refund_result') -and $MailJson.Contains('email_event_provider_balance')) 'Admin email settings expose the master switch and event selections'
             $AdminLogout = Invoke-Api POST '/admin-api/logout' $AdminHeaders @{}
             Assert-True ($AdminLogout.code -eq 0) 'Seeded administrator logout succeeds'
             Assert-True ((Get-Status '/admin-api/dashboard' $AdminHeaders) -eq 401) 'Logged-out administrator token is immediately revoked'

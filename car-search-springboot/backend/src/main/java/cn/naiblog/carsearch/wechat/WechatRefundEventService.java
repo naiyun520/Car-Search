@@ -3,6 +3,7 @@ package cn.naiblog.carsearch.wechat;
 import cn.naiblog.carsearch.config.SettingService;
 import cn.naiblog.carsearch.security.CryptoService;
 import cn.naiblog.carsearch.security.Hashing;
+import cn.naiblog.carsearch.service.EmailNotificationService;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -26,12 +27,14 @@ public class WechatRefundEventService {
     private final CryptoService crypto;
     private final SettingService settings;
     private final ObjectMapper mapper;
+    private final EmailNotificationService email;
 
-    public WechatRefundEventService(JdbcTemplate jdbc, CryptoService crypto, SettingService settings, ObjectMapper mapper) {
+    public WechatRefundEventService(JdbcTemplate jdbc, CryptoService crypto, SettingService settings, ObjectMapper mapper, EmailNotificationService email) {
         this.jdbc = jdbc;
         this.crypto = crypto;
         this.settings = settings;
         this.mapper = mapper;
+        this.email = email;
     }
 
     public Map<String, Object> handle(Map<String, Object> event) {
@@ -126,14 +129,17 @@ public class WechatRefundEventService {
             jdbc.update("update ci_payment set status='refunded',refund_status='refunded',refund_source=?,refund_order_no=coalesce(nullif(?,''),refund_order_no),refund_amount=?,refund_payload=?,refund_last_error=null,refunded_at=?,wechat_order_id=coalesce(nullif(?,''),wechat_order_id),channel_order_id=case when ?<>'' and ?<>order_no then ? else channel_order_id end,updated_at=? where id=?",
                     source, cut(mchRefundId.isBlank() ? wxRefundId : mchRefundId, 100), amount, payload,
                     refundedAt == null ? now : refundedAt, cut(wxOrderId, 100), cut(mchOrderId, 100), cut(mchOrderId, 100), cut(mchOrderId, 100), now, row.get("payment_id"));
+            email.refundResult(row.get("order_id"), true, "");
         } else {
             String restore = "refunding".equals(text(row.get("order_status")))
                     ? Optional.ofNullable(blankToNull(text(row.get("refund_from_status")))).orElse("query_failed")
                     : text(row.get("order_status"));
             if ("refunding".equals(text(row.get("order_status"))))
                 jdbc.update("update ci_order set status=?,updated_at=? where id=?", restore, now, row.get("order_id"));
+            String failureReason=cut(textOrDefault(field(event, "RetMsg", "ret_msg"), "退款未获批准"), 500);
             jdbc.update("update ci_payment set status='paid',refund_status='failed',refund_source=?,refund_payload=?,refund_last_error=?,updated_at=? where id=?",
-                    source, payload, cut(textOrDefault(field(event, "RetMsg", "ret_msg"), "退款未获批准"), 500), now, row.get("payment_id"));
+                    source, payload, failureReason, now, row.get("payment_id"));
+            email.refundResult(row.get("order_id"), false, failureReason);
         }
         Map<String, Object> response = success();
         completeEvent(eventKey, text(row.get("order_no")), response, "processed");
@@ -160,7 +166,7 @@ public class WechatRefundEventService {
     private Map<String, Object> findPayment(String... identifiers) {
         List<String> values = Arrays.stream(identifiers).map(this::text).filter(v -> !v.isBlank()).distinct().toList();
         if (values.isEmpty()) return null;
-        StringBuilder sql = new StringBuilder("select o.id order_id,o.order_no,o.status order_status,o.service_snapshot_cipher,o.updated_at,p.id payment_id,p.delivery_status,p.delivered_at,p.refund_status,p.refund_from_status,p.refund_requested_at,p.wechat_order_type,u.openid from ci_order o join ci_payment p on p.order_id=o.id join ci_user u on u.id=o.user_id where ");
+        StringBuilder sql = new StringBuilder("select o.id order_id,o.order_no,o.status order_status,o.client_platform,o.service_snapshot_cipher,o.updated_at,p.id payment_id,p.delivery_status,p.delivered_at,p.refund_status,p.refund_from_status,p.refund_requested_at,p.wechat_order_type,u.openid from ci_order o join ci_payment p on p.order_id=o.id join ci_user u on u.id=o.user_id where ");
         List<Object> args = new ArrayList<>();
         for (int i = 0; i < values.size(); i++) {
             if (i > 0) sql.append(" or ");
@@ -176,7 +182,8 @@ public class WechatRefundEventService {
         if (row == null) return false;
         if (productId.isBlank()) return true;
         Map<String, Object> snapshot = crypto.decrypt(text(row.get("service_snapshot_cipher")));
-        return productId.equals(text(snapshot.get("payment_product_id")));
+        String key="ios".equals(text(row.get("client_platform")))?"payment_product_id_ios":"payment_product_id_android";
+        return productId.equals(text(snapshot.getOrDefault(key,snapshot.get("payment_product_id"))));
     }
 
     private String reply(String key, String fallback, Map<String, Object> row, String refundReason, String reason, int max) {

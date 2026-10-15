@@ -31,7 +31,7 @@ header p{font-size:11px;margin-top:3px}
 .drawer-actions button{width:100%}
 .form .primary{width:100%}
 .detail-list{grid-template-columns:1fr}
-.order-detail-grid,.feedback-detail-grid{grid-template-columns:1fr 1fr}
+.order-detail-grid{grid-template-columns:1fr 1fr}
 .detail-data{grid-template-columns:1fr}
 .drawer-head{padding:18px 20px}
 .service-drawer form{padding:18px}
@@ -40,7 +40,7 @@ header p{font-size:11px;margin-top:3px}
 }
 @media(max-width:480px){
 .stats,.dashboard-stats{grid-template-columns:1fr}
-.order-detail-grid,.feedback-detail-grid{grid-template-columns:1fr}
+.order-detail-grid{grid-template-columns:1fr}
 .admin{display:none}
 header{height:58px;padding:0 12px}
 header h2{font-size:16px}
@@ -49,3 +49,4 @@ header h2{font-size:16px}
 .stat b{font-size:22px}
 .input-row{grid-template-columns:1fr}
 }
+.email-event-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.email-event{display:flex!important;align-items:flex-start;gap:10px;padding:14px;border:1px solid #dfe7f3;border-radius:10px;background:#f8fbff;cursor:pointer}.email-event input{width:18px!important;height:18px;margin:2px 0 0;flex:0 0 auto}.email-event span{display:flex;flex-direction:column;gap:4px}.email-event small{color:#697386;line-height:1.5}

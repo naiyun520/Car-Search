@@ -14,6 +14,7 @@ import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.HexFormat;
 
 @Service
 public class CryptoService {
@@ -65,5 +66,14 @@ public class CryptoService {
         } catch (Exception ignored) {
             return Map.of();
         }
+    }
+
+    /** A non-secret identifier operators can compare across deployments. */
+    public String keyFingerprint() {
+        return HexFormat.of().formatHex(key, 0, 6).toUpperCase();
+    }
+
+    public boolean canDecrypt(String payload) {
+        return payload == null || payload.isBlank() || !decrypt(payload).isEmpty();
     }
 }

@@ -1,76 +1,127 @@
 <template>
   <view class="page home">
     <view class="hero">
+      <image class="hero-image" src="/static/images/home-hero.jpg" mode="aspectFill" />
+      <view class="hero-shade" />
       <view class="safe-top" />
       <view class="brand-row">
-        <view class="brand-mark"><view class="brand-line" /><view class="brand-dot left" /><view class="brand-dot right" /></view>
-        <view><view class="brand-name">车辆信息查询</view><view class="brand-sub">车辆数据服务平台</view></view>
+        <view class="brand-icon"><image src="/static/images/app-avatar.png" mode="aspectFit" /></view>
+        <view><view class="brand-name">车档查</view><view class="brand-sub">专业车辆信息查询平台</view></view>
       </view>
-      <view class="hero-title">专业车辆信息服务</view>
-      <view class="hero-desc">选择所需服务，授权后即可发起查询</view>
+      <view class="hero-title">一键查询<view>车辆真实信息</view></view>
+      <view class="hero-desc">权威数据 · 专业解析 · 安全可靠</view>
     </view>
-
     <view class="content">
-      <view class="section-head"><text class="section-title">服务中心</text><text class="count">{{ services.length }} 项服务</text></view>
-      <view class="service-grid" v-if="services.length">
-        <view class="service-card card" v-for="service in services" :key="service.code" @click="openService(service)">
-          <view class="service-card-top">
-            <view class="service-icon">
-              <image v-if="iconUrl(service.icon)" :src="iconUrl(service.icon)" mode="aspectFill" />
-              <view v-else class="default-service-icon"><view class="car-body" /><view class="wheel wheel-left" /><view class="wheel wheel-right" /></view>
-            </view>
-            <text class="service-badge" :class="service.status===0?'maintenance-badge':'normal-badge'">{{ service.status===0?'维护中':'可查询' }}</text>
+      <view class="assurance">
+        <view class="assurance-item"><view class="assurance-icon"><image src="/static/icons/features/authority.svg" /></view><text>数据权威</text></view>
+        <view class="assurance-item"><view class="assurance-icon"><image src="/static/icons/features/quick.svg" /></view><text>查询快捷</text></view>
+        <view class="assurance-item"><view class="assurance-icon"><image src="/static/icons/features/complete.svg" /></view><text>信息全面</text></view>
+        <view class="assurance-item"><view class="assurance-icon"><image src="/static/icons/features/privacy.svg" /></view><text>隐私安全</text></view>
+      </view>
+      <view class="search-box card">
+        <text class="search-icon">⌕</text>
+        <input v-model="keyword" placeholder="搜索车辆信息、VIN、车牌等服务" confirm-type="search" @input="onSearchInput" />
+        <text v-if="keyword" class="clear" @click="clearSearch">×</text>
+      </view>
+      <scroll-view class="category-scroll" scroll-x enable-flex :show-scrollbar="false">
+        <view class="category-row">
+          <view class="category" :class="{ active: categoryCode === '' }" @click="categoryCode = ''">全部</view>
+          <view class="category" v-for="category in categories" :key="category.code" :class="{ active: categoryCode === category.code }" @click="categoryCode = category.code">{{ category.name }}</view>
+        </view>
+      </scroll-view>
+      <view class="section-head">
+        <view><text class="section-title">专业服务</text><text class="section-sub">按需选择车辆数据查询</text></view>
+        <text class="count">{{ filteredServices.length }} 项</text>
+      </view>
+      <view class="service-list" v-if="filteredServices.length">
+        <view class="service-card card" v-for="service in filteredServices" :key="service.code" @click="openService(service)">
+          <view class="service-icon"><image :src="iconUrl(service.icon)" mode="aspectFit" /></view>
+          <view class="service-main">
+            <text class="service-name">{{ service.short_name }}</text>
+            <view class="service-meta">{{ service.category_name || '车辆信息' }} · {{ inputLabel(service) }}</view>
           </view>
-          <view class="service-name">{{ service.short_name }}</view>
-          <view class="service-desc">{{ service.description }}</view>
-          <view class="service-foot"><text class="go" :class="{muted:service.status===0}">{{ service.status===0?'暂不可用':'进入服务' }}</text><text class="arrow">›</text></view>
+          <view class="service-side">
+            <text class="service-badge" :class="service.status === 0 ? 'maintenance-badge' : 'normal-badge'">{{ service.status === 0 ? '维护中' : '可查询' }}</text>
+            <view class="arrow">›</view>
+          </view>
         </view>
       </view>
-      <view v-else class="empty card">暂无可用查询服务</view>
+      <view v-else class="empty card">没有找到相关服务，换个关键词试试</view>
     </view>
-
     <view class="modal-mask" v-if="showAnnouncement">
-      <view class="modal card"><view class="modal-icon">i</view><view class="modal-title">{{ announcement.title }}</view><scroll-view scroll-y class="modal-content">{{ announcement.content }}</scroll-view><view class="suppress" @click="suppress=!suppress"><view class="checkbox" :class="{checked:suppress}">{{ suppress?'✓':'' }}</view><text>{{ announcement.suppress_hours }}小时内不再提示</text></view><button class="primary-btn" @click="closeAnnouncement(true)">我知道了</button><text class="modal-close" @click="closeAnnouncement(false)">×</text></view>
+      <view class="modal card">
+        <view class="modal-icon">i</view>
+        <view class="modal-title">{{ announcement.title }}</view>
+        <scroll-view scroll-y class="modal-content">{{ announcement.content }}</scroll-view>
+        <view class="suppress" @click="suppress = !suppress"><view class="checkbox" :class="{ checked: suppress }">{{ suppress ? '✓' : '' }}</view><text>{{ announcement.suppress_hours }}小时内不再提示</text></view>
+        <button class="primary-btn" @click="closeAnnouncement(true)">我知道了</button>
+        <text class="modal-close" @click="closeAnnouncement(false)">×</text>
+      </view>
     </view>
   </view>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { onLoad, onShareAppMessage } from '@dcloudio/uni-app'
 import { request } from '../../utils/request'
 import { API_BASE_URL } from '../../config'
+import { serviceIcon } from '../../utils/service-icons'
 
-// 分享配置
-onShareAppMessage(() => ({
-  title: '车辆信息查询 - 专业车辆数据服务平台',
-  path: '/pages/index/index'
-}))
-
+onShareAppMessage(() => ({ title: '车档查 - 专业车辆信息查询平台', path: '/pages/index/index' }))
 const services = ref([])
+const categories = ref([])
 const announcement = ref(null)
 const showAnnouncement = ref(false)
 const suppress = ref(false)
-
+const keyword = ref('')
+const categoryCode = ref('')
+const BOOTSTRAP_CACHE_KEY = 'bootstrap_cache_v3'
+const filteredServices = computed(() => {
+  const word = keyword.value.trim().toLowerCase()
+  return services.value.filter(service =>
+    (!categoryCode.value || service.category_code === categoryCode.value) &&
+    (!word || [service.name, service.short_name, service.category_name, service.code].some(value => String(value || '').toLowerCase().includes(word)))
+  )
+})
+function applyBootstrap(data, allowAnnouncement = true) {
+  if (!data?.services || !data?.categories) return
+  services.value = data.services
+  categories.value = data.categories
+  announcement.value = data.announcement || null
+  uni.setStorage({ key:'app_settings', data:data.settings || {} })
+  if (allowAnnouncement && data.announcement) {
+    const hiddenUntil = Number(uni.getStorageSync(`announcement_${data.announcement.id}_${data.announcement.updated_at}`) || 0)
+    showAnnouncement.value = Date.now() > hiddenUntil
+  }
+}
 onLoad(async () => {
+  let freshApplied = false
+  uni.getStorage({
+    key: BOOTSTRAP_CACHE_KEY,
+    success: result => {
+      const cache = result.data
+      if (!freshApplied && cache?.saved_at && Date.now() - cache.saved_at < 6 * 3600000) applyBootstrap(cache.data, false)
+    }
+  })
   try {
     const data = await request('/bootstrap', { public: true })
-    services.value = data.services || []
-    announcement.value = data.announcement
-    uni.setStorageSync('app_settings', data.settings || {})
-    if (data.announcement) {
-      const hiddenUntil = Number(uni.getStorageSync(`announcement_${data.announcement.id}_${data.announcement.updated_at}`) || 0)
-      showAnnouncement.value = Date.now() > hiddenUntil
-    }
-  } catch (error) { uni.showToast({ title: error.message, icon: 'none' }) }
+    freshApplied = true
+    applyBootstrap(data, true)
+    uni.setStorage({ key:BOOTSTRAP_CACHE_KEY, data:{ saved_at:Date.now(), data } })
+  } catch (error) {
+    if (!services.value.length) uni.showToast({ title: error.message, icon: 'none' })
+  }
 })
-
-function iconUrl(icon) {
-  const filename = String(icon || '')
-  return /^[a-f0-9]{32}\.(?:png|jpg|webp)$/.test(filename) ? `${API_BASE_URL}/service-icon/${filename}` : ''
+const iconUrl = icon => serviceIcon(icon, API_BASE_URL)
+const inputLabel = service => (service.input_schema || []).map(item => item.label).slice(0, 2).join(' + ') || '信息查询'
+function onSearchInput(event) {
+  keyword.value = event?.detail?.value ?? keyword.value
+  if (keyword.value.trim()) categoryCode.value = ''
 }
+function clearSearch() { keyword.value = '' }
 function openService(service) {
-  if (service.status !== 1) return uni.showToast({ title:'该服务维护中', icon:'none' })
+  if (service.status !== 1) return uni.showToast({ title: '该服务维护中', icon: 'none' })
   uni.setStorageSync('selected_query_service', service)
   uni.navigateTo({ url: `/pages/query/query?code=${service.code}` })
 }
@@ -81,5 +132,55 @@ function closeAnnouncement(fromButton) {
 </script>
 
 <style lang="scss" scoped>
-.home{background:#f3f6fa}.hero{padding:0 34rpx 78rpx;color:#fff;background:linear-gradient(145deg,#092f73 0%,#0f56bd 62%,#2779da 100%);border-radius:0 0 44rpx 44rpx;position:relative;overflow:hidden}.hero::after{content:"";position:absolute;width:380rpx;height:380rpx;right:-155rpx;top:35rpx;border:54rpx solid rgba(255,255,255,.06);border-radius:50%}.safe-top{height:calc(var(--status-bar-height) + 22rpx)}.brand-row{display:flex;align-items:center;gap:18rpx;position:relative;z-index:1}.brand-mark{width:72rpx;height:72rpx;border-radius:18rpx;background:rgba(255,255,255,.14);border:1rpx solid rgba(255,255,255,.35);position:relative}.brand-line{position:absolute;left:16rpx;right:16rpx;top:27rpx;height:19rpx;border:5rpx solid #fff;border-radius:9rpx 9rpx 5rpx 5rpx}.brand-dot{position:absolute;width:8rpx;height:8rpx;border-radius:50%;background:#fff;bottom:13rpx}.brand-dot.left{left:18rpx}.brand-dot.right{right:18rpx}.brand-name{font-size:33rpx;font-weight:700;letter-spacing:1rpx}.brand-sub{font-size:20rpx;opacity:.7;margin-top:5rpx;letter-spacing:2rpx}.hero-title{font-size:47rpx;font-weight:800;margin-top:60rpx;position:relative;z-index:1}.hero-desc{font-size:25rpx;opacity:.76;margin-top:14rpx;position:relative;z-index:1}.content{padding:32rpx 24rpx 50rpx}.section-head{display:flex;align-items:center;justify-content:space-between;margin:0 8rpx 22rpx}.section-title{font-size:34rpx;font-weight:750}.count{font-size:22rpx;color:#8793a5}.service-grid{display:grid;grid-template-columns:1fr 1fr;gap:20rpx}.service-card{padding:25rpx;min-height:310rpx}.service-card-top{display:flex;align-items:flex-start;justify-content:space-between}.service-icon{width:76rpx;height:76rpx;border-radius:20rpx;background:#e9f2ff;overflow:hidden;display:flex;align-items:center;justify-content:center}.service-icon image{width:100%;height:100%}.default-service-icon{width:58rpx;height:46rpx;position:relative}.car-body{position:absolute;left:5rpx;right:5rpx;top:13rpx;height:23rpx;border:5rpx solid #1764d7;border-radius:11rpx 11rpx 7rpx 7rpx}.car-body::before{content:"";position:absolute;left:9rpx;right:9rpx;top:-14rpx;height:15rpx;border:5rpx solid #1764d7;border-bottom:0;border-radius:11rpx 11rpx 0 0}.wheel{position:absolute;width:9rpx;height:9rpx;background:#1764d7;border-radius:50%;bottom:1rpx}.wheel-left{left:12rpx}.wheel-right{right:12rpx}.service-badge{padding:7rpx 13rpx;border-radius:20rpx;font-size:18rpx}.maintenance-badge{background:#fff2da;color:#9a6100}.normal-badge{background:#e8f7f0;color:#087e57}.service-name{font-size:29rpx;font-weight:700;margin-top:22rpx}.service-desc{font-size:22rpx;color:#7b8799;line-height:1.55;margin-top:10rpx;height:68rpx;overflow:hidden}.service-foot{display:flex;justify-content:space-between;align-items:center;margin-top:20rpx;padding-top:18rpx;border-top:1rpx solid #eef1f5}.go{font-size:21rpx;color:#175cd3}.go.muted{color:#9aa4b3}.arrow{font-size:30rpx;color:#9aa8ba}.modal-mask{position:fixed;inset:0;background:rgba(8,20,39,.58);z-index:100;display:flex;align-items:center;justify-content:center;padding:45rpx}.modal{width:100%;padding:48rpx 38rpx 36rpx;position:relative}.modal-icon{width:68rpx;height:68rpx;border-radius:50%;margin:auto;background:#e8f1ff;color:#175cd3;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:38rpx}.modal-title{text-align:center;font-size:34rpx;font-weight:700;margin:22rpx 0}.modal-content{max-height:390rpx;line-height:1.8;color:#59677d;font-size:26rpx;white-space:pre-wrap}.suppress{display:flex;align-items:center;gap:14rpx;margin:30rpx 0;font-size:24rpx;color:#657289}.checkbox{width:34rpx;height:34rpx;border:2rpx solid #bbc5d4;border-radius:7rpx;display:flex;align-items:center;justify-content:center}.checked{background:#175cd3;border-color:#175cd3;color:#fff}.modal-close{position:absolute;right:24rpx;top:15rpx;font-size:50rpx;color:#a3adbb;padding:10rpx}.empty{margin-top:10rpx}
+.home { background: #f3f7fc; }
+.hero { height: 560rpx; padding: 0 34rpx; color: #fff; position: relative; overflow: hidden; background: #0757bc; }
+.hero-image, .hero-shade { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hero-shade { background: linear-gradient(90deg, rgba(2,42,112,.96) 0%, rgba(8,78,175,.76) 50%, rgba(13,101,210,.18) 100%); }
+.safe-top { height: calc(var(--status-bar-height) + 24rpx); }
+.brand-row { position: relative; top: 20px; display: flex; align-items: center; gap: 16rpx; }
+.brand-icon { width: 76rpx; height: 76rpx; border: 2rpx solid rgba(255,255,255,.7); border-radius: 20rpx; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; box-shadow: 0 8rpx 22rpx rgba(1,35,92,.18); }
+.brand-icon image { width: 68rpx; height: 68rpx; }
+.brand-name { font-size: 34rpx; font-weight: 800; letter-spacing: 2rpx; }
+.brand-sub { font-size: 20rpx; opacity: .82; margin-top: 5rpx; }
+.hero-title { position: relative; margin-top: 50rpx; font-size: 51rpx; font-weight: 800; line-height: 1.32; letter-spacing: 2rpx; }
+.hero-desc { position: relative; margin-top: 15rpx; font-size: 23rpx; opacity: .88; }
+.content { padding: 0 24rpx 42rpx; margin-top: -42rpx; position: relative; }
+.assurance { min-height: 152rpx; margin: 0 -24rpx; padding: 30rpx 25rpx 22rpx; display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; background: #fff; border-radius: 52rpx 52rpx 0 0; box-shadow: 0 -10rpx 30rpx rgba(6,72,153,.06); }
+.assurance-item { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 11rpx; color: #263a57; font-size: 22rpx; font-weight: 650; line-height: 1; white-space: nowrap; }
+.assurance-icon { width: 64rpx; height: 64rpx; display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6rpx 8rpx rgba(12,99,224,.16)); }
+.assurance-icon image { width: 64rpx; height: 64rpx; }
+.search-box { height: 96rpx; margin-top: 0; display: flex; align-items: center; padding: 0 24rpx; border-radius: 22rpx; }
+.search-icon { font-size: 40rpx; color: #6e8098; margin-right: 14rpx; }
+.search-box input { flex: 1; font-size: 26rpx; }
+.clear { padding: 12rpx; color: #95a1b2; }
+.category-scroll { width: 100%; white-space: nowrap; margin: 22rpx 0 30rpx; }
+.category-row { display: flex; width: max-content; min-width: 100%; gap: 14rpx; padding: 2rpx 8rpx 12rpx 2rpx; box-sizing: border-box; }
+.category { flex: none; height: 64rpx; padding: 0 27rpx; border-radius: 32rpx; background: #fff; color: #66758b; display: flex; align-items: center; font-size: 24rpx; border: 1rpx solid #e4eaf2; }
+.category.active { background: #126bee; border-color: #126bee; color: #fff; box-shadow: 0 8rpx 20rpx rgba(18,107,238,.24); }
+.section-head { display: flex; align-items: flex-end; justify-content: space-between; margin: 0 8rpx 20rpx; }
+.section-title { font-size: 34rpx; font-weight: 800; }
+.section-sub { display: block; font-size: 21rpx; color: #929dab; margin-top: 7rpx; }
+.count { font-size: 22rpx; color: #7f8b9d; }
+.service-list { display: flex; flex-direction: column; gap: 16rpx; }
+.service-card { min-height: 150rpx; padding: 21rpx 19rpx 21rpx 22rpx; display: flex; align-items: center; border: 1rpx solid #eaf0f7; border-radius: 22rpx; box-shadow: 0 8rpx 22rpx rgba(31,75,126,.065); }
+.service-icon { width: 84rpx; height: 84rpx; border-radius: 22rpx; background: #eaf3ff; padding: 14rpx; flex: none; }
+.service-icon image { width: 100%; height: 100%; }
+.service-main { flex: 1; min-width: 0; margin-left: 22rpx; }
+.service-name { display: block; min-width: 0; font-size: 28rpx; font-weight: 750; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.service-side { width: 92rpx; flex: none; margin-left: 12rpx; align-self: stretch; display: flex; flex-direction: column; align-items: flex-end; padding-top: 3rpx; box-sizing: border-box; }
+.service-badge { min-width: 72rpx; padding: 7rpx 11rpx 6rpx; border-radius: 20rpx; box-sizing: border-box; text-align: center; font-size: 19rpx; font-weight: 650; line-height: 1.1; }
+.normal-badge { background: #e4faee; color: #06a567; }
+.maintenance-badge { background: #fff3dd; color: #9b6300; }
+.service-meta { font-size: 21rpx; color: #8995a7; margin-top: 12rpx; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arrow { margin-top: 24rpx; padding-right: 8rpx; font-size: 38rpx; line-height: 1; color: #8298b4; }
+.empty { margin-top: 10rpx; }
+.modal-mask { position: fixed; inset: 0; background: rgba(8,20,39,.58); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 45rpx; }
+.modal { width: 100%; padding: 48rpx 38rpx 36rpx; position: relative; }
+.modal-icon { width: 68rpx; height: 68rpx; border-radius: 50%; margin: auto; background: #e8f1ff; color: #175cd3; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 38rpx; }
+.modal-title { text-align: center; font-size: 34rpx; font-weight: 700; margin: 22rpx 0; }
+.modal-content { max-height: 390rpx; line-height: 1.8; color: #59677d; font-size: 26rpx; white-space: pre-wrap; }
+.suppress { display: flex; align-items: center; gap: 14rpx; margin: 30rpx 0; font-size: 24rpx; color: #657289; }
+.checkbox { width: 34rpx; height: 34rpx; border: 2rpx solid #bbc5d4; border-radius: 7rpx; display: flex; align-items: center; justify-content: center; }
+.checked { background: #175cd3; border-color: #175cd3; color: #fff; }
+.modal-close { position: absolute; right: 24rpx; top: 15rpx; font-size: 50rpx; color: #a3adbb; padding: 10rpx; }
 </style>

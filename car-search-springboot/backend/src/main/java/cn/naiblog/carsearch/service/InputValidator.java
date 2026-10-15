@@ -1,6 +1,7 @@
 package cn.naiblog.carsearch.service;
 
 import cn.naiblog.carsearch.api.BusinessException;
+import java.text.Normalizer;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +25,7 @@ public final class InputValidator {
             String value = String.valueOf(input.getOrDefault(key, "")).trim();
             if (Boolean.TRUE.equals(field.get("required")) && value.isBlank()) throw new BusinessException(label + "不能为空");
             if (value.isBlank()) continue;
-            if (List.of("plate","plate_prefix","plate_or_vin","vin").contains(type)) value = value.replace(" ", "").toUpperCase();
+            if (List.of("plate","plate_prefix","plate_or_vin","vin").contains(type)) value = Normalizer.normalize(value, Normalizer.Form.NFKC).replaceAll("[\\s\\p{Zs}]+", "").toUpperCase();
             int length = value.codePointCount(0, value.length());
             boolean valid = PATTERNS.containsKey(type) ? PATTERNS.get(type).matcher(value).matches()
                     : "name".equals(type) ? length >= 2 && length <= 30 : length <= 100;

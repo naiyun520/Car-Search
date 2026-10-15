@@ -4,7 +4,6 @@
     { "path": "pages/query/query", "style": { "navigationBarTitleText": "信息查询" } },
     { "path": "pages/result/result", "style": { "navigationBarTitleText": "查询结果" } },
     { "path": "pages/orders/orders", "style": { "navigationBarTitleText": "历史订单" } },
-    { "path": "pages/feedback/feedback", "style": { "navigationBarTitleText": "投诉意见" } },
     { "path": "pages/agreement/agreement", "style": { "navigationBarTitleText": "协议与声明" } },
     { "path": "pages/my/my", "style": { "navigationStyle": "custom" } }
   ],
@@ -14,8 +13,8 @@
     "backgroundColor": "#ffffff",
     "borderStyle": "black",
     "list": [
-      { "pagePath": "pages/index/index", "text": "首页" },
-      { "pagePath": "pages/my/my", "text": "我的" }
+      { "pagePath": "pages/index/index", "text": "首页", "iconPath": "static/icons/tabbar/home.png", "selectedIconPath": "static/icons/tabbar/home-active.png" },
+      { "pagePath": "pages/my/my", "text": "我的", "iconPath": "static/icons/tabbar/user.png", "selectedIconPath": "static/icons/tabbar/user-active.png" }
     ]
   },
   "globalStyle": {

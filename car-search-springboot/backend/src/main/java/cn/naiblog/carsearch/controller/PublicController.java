@@ -2,7 +2,6 @@ package cn.naiblog.carsearch.controller;
 
 import cn.naiblog.carsearch.api.ApiResponse;
 import cn.naiblog.carsearch.config.CarProperties;
-import cn.naiblog.carsearch.config.SettingService;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,21 +22,23 @@ import java.util.*;
 
 @RestController @RequestMapping("/api/v1")
 public class PublicController {
-    private final JdbcTemplate jdbc; private final ObjectMapper mapper; private final SettingService settings; private final CarProperties properties; private final Path icons;
-    public PublicController(JdbcTemplate jdbc, ObjectMapper mapper, SettingService settings, CarProperties properties,@Value("${car.storage-path:./runtime/uploads}")String storage) { this.jdbc=jdbc;this.mapper=mapper;this.settings=settings;this.properties=properties;this.icons=Path.of(storage).toAbsolutePath().normalize().resolve("service-icons"); }
+    private final JdbcTemplate jdbc; private final ObjectMapper mapper; private final CarProperties properties; private final Path icons;
+    public PublicController(JdbcTemplate jdbc, ObjectMapper mapper, CarProperties properties,@Value("${car.storage-path:./runtime/uploads}")String storage) { this.jdbc=jdbc;this.mapper=mapper;this.properties=properties;this.icons=Path.of(storage).toAbsolutePath().normalize().resolve("service-icons"); }
 
     @GetMapping("/bootstrap")
     public ApiResponse<Map<String,Object>> bootstrap() throws Exception {
-        List<Map<String,Object>> rows=jdbc.queryForList("select id,code,name,short_name,description,icon,input_schema,result_schema,status,updated_at from ci_service where status in (0,1) order by sort,id");
+        List<Map<String,Object>> categories=jdbc.queryForList("select id,code,name,icon,sort from ci_service_category where status=1 order by sort,id");
+        List<Map<String,Object>> rows=jdbc.queryForList("select s.id,s.code,s.category_id,c.code category_code,c.name category_name,s.name,s.short_name,s.description,s.icon,s.input_schema,s.result_schema,s.sale_price_android,s.sale_price_ios,s.status,s.updated_at from ci_service s join ci_service_category c on c.id=s.category_id and c.status=1 where s.status in (0,1) order by c.sort,s.sort,s.id");
         List<Map<String,Object>> services=new ArrayList<>(); StringBuilder version=new StringBuilder();
         for(Map<String,Object> row:rows){ version.append(row.get("id")).append(':').append(row.get("code")).append(':').append(row.get("status")).append(':').append(row.get("updated_at")).append('|');
-            Map<String,Object> item=new LinkedHashMap<>(); for(String key:List.of("code","name","short_name","description","icon")) item.put(key,row.get(key));
+            Map<String,Object> item=new LinkedHashMap<>(); for(String key:List.of("code","category_id","category_code","category_name","name","short_name","description","icon","sale_price_android","sale_price_ios")) item.put(key,row.get(key));
             item.put("input_schema",mapper.readValue(String.valueOf(row.get("input_schema")),new TypeReference<List<Map<String,Object>>>(){}));
             item.put("result_schema",mapper.readValue(String.valueOf(row.get("result_schema")),new TypeReference<Map<String,Object>>(){})); item.put("status",((Number)row.get("status")).intValue()); services.add(item); }
         List<Map<String,Object>> announcements=jdbc.queryForList("select id,title,content,suppress_hours,updated_at from ci_announcement where status=1 and (start_at is null or start_at<=?) and (end_at is null or end_at>=?) order by id desc limit 1",LocalDateTime.now(),LocalDateTime.now());
-        Map<String,Object> publicSettings=new LinkedHashMap<>(); for(String key:List.of("operator_name","privacy_contact","privacy_effective_date","customer_service_phone","customer_service_hours","disclaimer","privacy_retention_days")) publicSettings.put(key,settings.value(key,""));
+        Map<String,String> storedSettings=new HashMap<>();jdbc.query("select `key`,value from ci_setting",rs->{while(rs.next())storedSettings.put(rs.getString(1),rs.getString(2));});
+        Map<String,Object> publicSettings=new LinkedHashMap<>(); for(String key:List.of("operator_name","privacy_contact","privacy_effective_date","customer_service_phone","customer_service_hours","disclaimer","privacy_retention_days")) publicSettings.put(key,storedSettings.getOrDefault(key,""));
         String catalog=HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(version.toString().getBytes(StandardCharsets.UTF_8)));
-        Map<String,Object> result=new LinkedHashMap<>(); result.put("app_version","20260815-query-v1"); result.put("protocol_version",properties.clientProtocol()); result.put("catalog_version",catalog); result.put("services",services); result.put("announcement",announcements.isEmpty()?null:announcements.getFirst()); result.put("settings",publicSettings); return ApiResponse.ok(result);
+        Map<String,Object> result=new LinkedHashMap<>(); result.put("app_version","20260921-catalog-v2"); result.put("protocol_version",properties.clientProtocol()); result.put("catalog_version",catalog); result.put("categories",categories); result.put("services",services); result.put("announcement",announcements.isEmpty()?null:announcements.getFirst()); result.put("settings",publicSettings); return ApiResponse.ok(result);
     }
 
     @GetMapping("/service-icon/{file}")

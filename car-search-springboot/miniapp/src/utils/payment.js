@@ -24,6 +24,13 @@ export async function requestVirtualPayment(payment) {
   }))
 }
 
+export function paymentPlatform() {
+  if (typeof wx === 'undefined') return 'android'
+  const info = wx.getDeviceInfo ? wx.getDeviceInfo() : (wx.getSystemInfoSync?.() || {})
+  const platform = String(info.platform || '').toLowerCase()
+  return platform === 'ios' ? 'ios' : 'android'
+}
+
 function validatePayment(payment) {
   if (typeof payment.signData !== 'string') throw new Error('支付参数格式错误：signData 必须是字符串')
   let signData
