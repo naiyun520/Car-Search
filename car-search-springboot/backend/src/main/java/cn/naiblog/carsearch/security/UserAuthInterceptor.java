@@ -25,6 +25,20 @@ public class UserAuthInterceptor implements HandlerInterceptor {
         String authorization = request.getHeader("Authorization");
         String token = authorization != null && authorization.regionMatches(true, 0, "Bearer ", 0, 7)
                 ? authorization.substring(7).trim() : "";
+        // 兼容 uni.uploadFile 不发送 header 的情况：从 URL 查询参数获取 token
+        if (token.isEmpty()) {
+            String qs = request.getQueryString();
+            if (qs != null) {
+                for (String param : qs.split("&")) {
+                    if (param.startsWith("access_token=")) {
+                        try {
+                            token = java.net.URLDecoder.decode(param.substring(13), java.nio.charset.StandardCharsets.UTF_8).trim();
+                        } catch (Exception ignored) {}
+                        break;
+                    }
+                }
+            }
+        }
         List<CurrentUser> users = token.isEmpty() ? List.of() : jdbc.query("""
                 select u.id,u.openid,u.unionid,u.nickname,u.avatar_url,u.phone
                 from ci_user_token t join ci_user u on u.id=t.user_id

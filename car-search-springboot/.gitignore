@@ -18,3 +18,8 @@ ci_service*.sql
 
 # 防止环境配置文件被打包
 backend/src/main/resources/.env*
+
+# 其他项目和生成文件
+car-miniapp/
+naiyun/
+interfaces_organized.json

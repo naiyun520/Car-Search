@@ -266,49 +266,15 @@ async function chooseImage(fieldKey) {
     // 上传图片
     uploading[fieldKey] = true
     uploadProgress[fieldKey] = 0
-    const token = await ensureLogin()
 
-    const uploadResult = await new Promise((resolve, reject) => {
-      const uploadTask = uni.uploadFile({
-        url: `${API_BASE_URL}/upload/image`,
-        filePath: filePath,
-        name: 'file',
-        formData: {
-          type: 'license'
-        },
-        header: {
-          Authorization: `Bearer ${token}`
-        },
-        success: (res) => {
-          if (res.statusCode === 200) {
-            try {
-              const data = JSON.parse(res.data)
-              if (data.code === 0) {
-                resolve(data.data)
-              } else {
-                reject(new Error(data.message || '上传失败'))
-              }
-            } catch (e) {
-              reject(new Error('解析响应失败'))
-            }
-          } else if (res.statusCode === 401) {
-            reject(new Error('登录已过期，请重新登录'))
-          } else {
-            reject(new Error('上传失败，状态码：' + res.statusCode))
-          }
-        },
-        fail: (err) => {
-          reject(new Error(err.errMsg || '网络错误'))
-        }
-      })
-
-      uploadTask.onProgressUpdate((res) => {
-        uploadProgress[fieldKey] = res.progress
-      })
-    })
-
-    // 上传成功，保存 URL
-    form.value[fieldKey] = uploadResult.url
+    const uploadResult = await doUploadWithRetry(filePath, fieldKey)
+    // 上传成功，保存 URL（如果是相对路径则拼接域名）
+    let imageUrl = uploadResult.url
+    if (imageUrl && imageUrl.startsWith('/')) {
+      const domainMatch = API_BASE_URL.match(/^(https?:\/\/[^/]+)/)
+      if (domainMatch) imageUrl = domainMatch[1] + imageUrl
+    }
+    form.value[fieldKey] = imageUrl
     uni.showToast({ title: '上传成功', icon: 'success' })
 
   } catch (error) {
@@ -323,6 +289,40 @@ async function chooseImage(fieldKey) {
 
 function clearImage(fieldKey) {
   form.value[fieldKey] = ''
+}
+
+// 上传图片（带401自动重试）
+async function doUploadWithRetry(filePath, fieldKey, retried = false) {
+  const token = await ensureLogin()
+  return new Promise((resolve, reject) => {
+    const uploadTask = uni.uploadFile({
+      // token 通过 query 参数传递，兼容 uni.uploadFile 不发送 header 的情况
+      url: `${API_BASE_URL}/upload/image?access_token=${encodeURIComponent(token)}`,
+      filePath: filePath,
+      name: 'file',
+      formData: { type: 'license' },
+      header: { Authorization: `Bearer ${token}` },
+      success: (res) => {
+        if (res.statusCode === 200) {
+          try {
+            const data = JSON.parse(res.data)
+            if (data.code === 0) return resolve(data.data)
+            reject(new Error(data.message || '上传失败'))
+          } catch (e) { reject(new Error('解析响应失败')) }
+        } else if (res.statusCode === 401 && !retried) {
+          clearLogin()
+          // 重试一次（会重新获取 token）
+          doUploadWithRetry(filePath, fieldKey, true).then(resolve).catch(reject)
+        } else if (res.statusCode === 401) {
+          reject(new Error('登录已过期，请重新登录'))
+        } else {
+          reject(new Error('上传失败，状态码：' + res.statusCode))
+        }
+      },
+      fail: (err) => { reject(new Error(err.errMsg || '网络错误')) }
+    })
+    uploadTask.onProgressUpdate((res) => { uploadProgress[fieldKey] = res.progress })
+  })
 }
 
 async function submit() {
