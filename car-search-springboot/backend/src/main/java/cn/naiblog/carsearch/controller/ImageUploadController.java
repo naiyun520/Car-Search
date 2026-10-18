@@ -1,8 +1,10 @@
 package cn.naiblog.carsearch.controller;
 
 import cn.naiblog.carsearch.api.ApiResponse;
+import cn.naiblog.carsearch.api.ApiSupport;
 import cn.naiblog.carsearch.api.BusinessException;
 import cn.naiblog.carsearch.security.CurrentUser;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,13 +37,16 @@ public class ImageUploadController {
 
     private final Path uploadDir;
     private final String baseUrl;
+    private final ApiSupport api;
     private final SecureRandom random = new SecureRandom();
 
     public ImageUploadController(
             @Value("${car.storage-path:./runtime/uploads}") String storagePath,
-            @Value("${car.upload-base-url:}") String baseUrl) {
+            @Value("${car.upload-base-url:}") String baseUrl,
+            ApiSupport api) {
         this.uploadDir = Path.of(storagePath).toAbsolutePath().normalize().resolve("uploads");
         this.baseUrl = baseUrl;
+        this.api = api;
     }
 
     /**
@@ -54,7 +59,8 @@ public class ImageUploadController {
     public ApiResponse<Map<String, Object>> uploadImage(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "type", defaultValue = "general") String type,
-            CurrentUser user) {
+            HttpServletRequest request) {
+        CurrentUser user = api.user(request);
         log.info("[ImageUpload] 用户={}, type={}, filename={}, size={}",
                 user.id(), type, file.getOriginalFilename(), file.getSize());
 
