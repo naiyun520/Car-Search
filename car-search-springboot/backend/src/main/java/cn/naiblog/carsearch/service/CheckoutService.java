@@ -42,6 +42,17 @@ public class CheckoutService {
     public Map<String,Object> payment(long userId,String no,String requestedPlatform){Map<String,Object>o=owned(userId,no);String platform=payment.normalizePlatform(requestedPlatform);if(requestedPlatform==null||requestedPlatform.isBlank())throw new BusinessException("客户端未提交支付平台，请更新小程序后重试");if(!platform.equals(String.valueOf(o.get("client_platform"))))throw new BusinessException("当前设备平台与订单不一致，请返回服务页重新下单，原订单不会扣款");if(!"pending_payment".equals(o.get("status")))return paymentResult(detail(o),null);Map<String,Object>u=userRow(userId);reconciliation.reconcile(o,u);o=owned(userId,no);if(!"pending_payment".equals(o.get("status")))return paymentResult(detail(o),null);Object exp=o.get("expired_at");if(exp instanceof java.sql.Timestamp t&&t.toLocalDateTime().isBefore(LocalDateTime.now())){jdbc.update("update ci_order set status='cancelled',updated_at=? where id=? and status='pending_payment'",LocalDateTime.now(),o.get("id"));o.put("status","cancelled");return paymentResult(detail(o),null);}Map<String,Object>s=crypto.decrypt(String.valueOf(o.getOrDefault("service_snapshot_cipher","")));if(s.isEmpty())throw new IllegalStateException("订单支付配置快照不可用，请联系客服处理");return paymentResult(safe(o),payment.clientParams(o,u,s));}
     public Map<String,Object> query(long userId,String no){Map<String,Object> o=owned(userId,no);if("paid".equals(o.get("status")))queries.run(o);return detail(owned(userId,no));}
     public Object recoverable(long userId){List<Map<String,Object>> rows=jdbc.queryForList("select * from ci_order where user_id=? and paid_at is not null and status in ('paid','querying','query_failed','success','payment_review') and created_at>=? order by id desc limit 1",userId,LocalDateTime.now().minusHours(24));return rows.isEmpty()?null:detail(rows.getFirst());}
+    /** 标记单次查询结果为已查看（仅限 sync 模式，由结果页主动调用） */
+    public void markResultViewed(long userId,String no){
+        Map<String,Object>o=owned(userId,no);
+        if(!"success".equals(o.get("status"))||o.get("result_cipher")==null)return;
+        String providerRequestId=String.valueOf(o.getOrDefault("provider_request_id",""));
+        boolean isAsync=!providerRequestId.isBlank()&&!"null".equals(providerRequestId);
+        if(!isAsync){
+            jdbc.update("update ci_order set result_viewed_at=? where id=? and result_viewed_at is null",LocalDateTime.now(),o.get("id"));
+        }
+    }
+
     public Map<String,Object> safe(Map<String,Object> o){Map<String,Object> r=new LinkedHashMap<>();for(String k:List.of("order_no","service_name","amount","client_platform","status","paid_at","queried_at","created_at"))r.put(k,o.get(k));return r;}
     public Map<String,Object> detail(Map<String,Object> o){
         Map<String,Object> r=safe(o);
@@ -56,10 +67,6 @@ public class CheckoutService {
                 r.put("message","查询结果已销毁，退出后无法再次查看。如需再次查询请重新付费。");
             }else{
                 r.put("result",ResultValueFormatter.formatItems(crypto.decrypt(String.valueOf(o.get("result_cipher"))).getOrDefault("items",List.of())));
-                // 单次查询首次查看，标记
-                if(!isAsync){
-                    jdbc.update("update ci_order set result_viewed_at=? where id=? and result_viewed_at is null",LocalDateTime.now(),o.get("id"));
-                }
             }
             try{delivery(o);}catch(Exception ignored){}
         }

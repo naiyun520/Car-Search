@@ -96,6 +96,7 @@ onLoad(async options=>{
   currentOrderNo=String(options.order_no||'')
   try{
     order.value=await checkoutRequest('/checkout/status',{orderNo:currentOrderNo})
+    markViewedIfNeeded()
   }catch(error){uni.showModal({title:'提示',content:error.message,showCancel:false})}
 })
 
@@ -104,6 +105,7 @@ onShow(async()=>{
   if(!currentOrderNo) return
   try{
     order.value=await checkoutRequest('/checkout/status',{orderNo:currentOrderNo})
+    markViewedIfNeeded()
     if(isQuerying.value&&!pollTimer){
       startPolling()
     }else if(!isQuerying.value){
@@ -131,6 +133,7 @@ function startPolling(){
         stopPolling()
         // 重新加载订单状态
         order.value=await checkoutRequest('/checkout/status',{orderNo:order.value.order_no})
+        markViewedIfNeeded()
       }
     }catch(e){console.warn('[Polling] 查询状态失败',e)}
   },5000) // 每5秒轮询一次
@@ -146,8 +149,16 @@ async function reloadOrder(){
   try{
     const prev=order.value.status
     order.value=await checkoutRequest('/checkout/status',{orderNo:order.value.order_no||currentOrderNo})
+    markViewedIfNeeded()
     if(prev==='querying'&&order.value.status!=='querying') stopPolling()
   }catch(e){console.warn('[reloadOrder] 刷新失败',e)}
+}
+/** 标记单次查询结果为已查看（仅在成功展示结果时调用，静默失败） */
+function markViewedIfNeeded(){
+  const o=order.value
+  if(o.status==='success'&&!o.result_destroyed&&o.result?.length){
+    checkoutRequest('/checkout/mark-viewed',{method:'POST',orderNo:o.order_no,data:{order_no:o.order_no}}).catch(()=>{})
+  }
 }
 function openAppleRefund(){uni.setClipboardData({data:order.value.apple_refund_url||APPLE_REFUND_URL,success:()=>uni.showToast({title:'链接已复制',icon:'success'})})}
 function backHome(){uni.switchTab({url:'/pages/index/index'})}
