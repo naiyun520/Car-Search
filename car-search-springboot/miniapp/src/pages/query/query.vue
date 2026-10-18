@@ -276,7 +276,7 @@ async function chooseImage(fieldKey) {
           type: 'license'
         },
         header: {
-          Authorization: `Bearer ${uni.getStorageSync('token') || ''}`
+          Authorization: `Bearer ${await ensureLogin()}`
         },
         success: (res) => {
           if (res.statusCode === 200) {
