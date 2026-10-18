@@ -96,20 +96,19 @@ onLoad(async options=>{
   currentOrderNo=String(options.order_no||'')
   try{
     order.value=await checkoutRequest('/checkout/status',{orderNo:currentOrderNo})
-    if(isQuerying.value) startPolling()
   }catch(error){uni.showModal({title:'提示',content:error.message,showCancel:false})}
 })
 
-// 页面重新显示时刷新状态（从后台切回、从其他页面返回）
+// 页面重新显示时刷新状态（首次加载、从后台切回、从其他页面返回都会触发）
 onShow(async()=>{
   if(!currentOrderNo) return
   try{
-    const prev=order.value.status
     order.value=await checkoutRequest('/checkout/status',{orderNo:currentOrderNo})
-    // 状态变化时停止轮询
-    if(prev==='querying'&&order.value.status!=='querying') stopPolling()
-    // 如果从非querying变为querying（极少见），启动轮询
-    if(prev!=='querying'&&order.value.status==='querying'&&!pollTimer) startPolling()
+    if(isQuerying.value&&!pollTimer){
+      startPolling()
+    }else if(!isQuerying.value){
+      stopPolling()
+    }
   }catch(e){console.warn('[onShow] 刷新订单失败',e)}
 })
 
@@ -122,6 +121,7 @@ onPullDownRefresh(async()=>{
 onUnmounted(()=>{stopPolling()})
 
 function startPolling(){
+  stopPolling() // 防止重复创建
   elapsed.value=0
   elapsedTimer=setInterval(()=>{elapsed.value++},1000)
   pollTimer=setInterval(async()=>{
