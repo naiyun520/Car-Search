@@ -26,7 +26,8 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentNotValidException.class})
-    ResponseEntity<ApiResponse<Void>> invalidRequest(Exception ignored) {
+    ResponseEntity<ApiResponse<Void>> invalidRequest(Exception error, HttpServletRequest request) {
+        log.warn("[422] 请求解析失败 method={} uri={} error={} message={}", request.getMethod(), request.getRequestURI(), error.getClass().getSimpleName(), error.getMessage());
         return ResponseEntity.unprocessableEntity().body(ApiResponse.error(422, "请求数据格式错误，请更新小程序后重试"));
     }
 
