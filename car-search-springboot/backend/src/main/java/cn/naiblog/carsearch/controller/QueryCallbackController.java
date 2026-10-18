@@ -129,8 +129,18 @@ public class QueryCallbackController {
                     Map<String, Object> result = (Map<String, Object>) body.get("result");
                     String queryStatus = String.valueOf(result.getOrDefault("query_status",
                             result.getOrDefault("result_status", "")));
-                    if ("7".equals(queryStatus) || "3".equals(queryStatus)) {
+                    // query_status: 3=查询成功, 7=查询失败
+                    if ("7".equals(queryStatus)) {
                         status = "failed";
+                    }
+                    // 也检查内层 result.status: 1=查询中, 2=查询成功, 3=查询失败
+                    if (result.get("result") instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> inner = (Map<String, Object>) result.get("result");
+                        Object innerStatus = inner.get("status");
+                        if (innerStatus instanceof Number n && n.intValue() == 3) {
+                            status = "failed";
+                        }
                     }
                 }
 
