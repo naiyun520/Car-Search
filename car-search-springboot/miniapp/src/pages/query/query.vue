@@ -443,11 +443,29 @@ async function poll(orderNo) {
     if (order.status === 'paid') return fulfil(orderNo, order)
     if (order.status === 'query_failed') return finish(orderNo)
     if (['payment_review','cancelled','refunded'].includes(order.status)) throw finalError(order.message || statusMessage(order))
-    // 回调模式：querying 状态直接跳转结果页，让结果页接管长轮询
-    if (order.status === 'querying') return finish(orderNo)
+    // 回调模式：querying 状态 → 提示用户去订单列表查看
+    if (order.status === 'querying') return showAsyncPending(orderNo)
   }
-  // 超时后如果仍在 querying，也跳转结果页
-  return finish(orderNo)
+  // 超时后如果仍在 querying，也提示用户
+  return showAsyncPending(orderNo)
+}
+
+function showAsyncPending(orderNo) {
+  clearFlow()
+  uni.showModal({
+    title: '订单已提交',
+    content: '查询结果需要一定时间处理，请耐心等待。您可以在「我的 → 订单」中随时查看查询进度和结果。',
+    confirmText: '查看订单',
+    cancelText: '返回首页',
+    showCancel: true,
+    success: res => {
+      if (res.confirm) {
+        uni.navigateTo({ url: '/pages/orders/orders' })
+      } else {
+        uni.switchTab({ url: '/pages/index/index' })
+      }
+    }
+  })
 }
 
 async function resumePaidFlow(orderNo) {
