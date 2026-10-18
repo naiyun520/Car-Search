@@ -101,5 +101,7 @@ public class AuthController {
         safe.put("phone_masked",phone.length() >= 7 ? phone.substring(0,3)+"****"+phone.substring(phone.length()-4) : ""); return safe;
     }
     public record LoginRequest(@NotBlank String code) {}
-    public record ProfileRequest(String nickname, @com.fasterxml.jackson.annotation.JsonProperty("avatar_url") String avatarUrl) {}
+    public record ProfileRequest(String nickname, String avatar_url) {
+        public String avatarUrl() { return avatar_url; }
+    }
 }

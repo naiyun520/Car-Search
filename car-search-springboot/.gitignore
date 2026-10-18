@@ -1,6 +1,20 @@
 .local/
+.env
 .env.local
 backend/target/
 miniapp/node_modules/
 miniapp/dist/
 car_test_mysql_data_bJDYo.sql
+
+# 构建产物
+*.jar
+
+# 包含数据库密码的本地配置
+backend/src/main/resources/application-local.yml
+
+# 数据库导出文件（升级脚本除外）
+newcar_*.sql
+ci_service*.sql
+
+# 防止环境配置文件被打包
+backend/src/main/resources/.env*

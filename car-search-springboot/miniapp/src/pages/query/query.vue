@@ -43,6 +43,27 @@
           v-model="form[field.key]"
           @focus="openPlateKeyboard(field)" />
 
+        <!-- 图片上传：行驶证、身份证等 -->
+        <view v-else-if="field.type === 'image'" class="image-upload-wrap">
+          <view v-if="form[field.key]" class="image-preview">
+            <image :src="form[field.key]" mode="aspectFit" class="preview-image" />
+            <view class="image-actions">
+              <button class="action-btn" @tap="chooseImage(field.key)">重新选择</button>
+              <button class="action-btn danger" @tap="clearImage(field.key)">删除</button>
+            </view>
+          </view>
+          <view v-else class="image-placeholder" @tap="chooseImage(field.key)">
+            <text class="upload-icon">+</text>
+            <text class="upload-text">点击上传{{ field.label }}</text>
+            <text class="upload-hint">支持 JPG、PNG 格式，不超过 5MB</text>
+          </view>
+          <!-- 上传进度 -->
+          <view v-if="uploading[field.key]" class="upload-progress">
+            <view class="progress-bar"><view class="progress-fill" :style="{ width: uploadProgress[field.key] + '%' }"></view></view>
+            <text class="progress-text">上传中 {{ uploadProgress[field.key] }}%</text>
+          </view>
+        </view>
+
         <!-- 其他字段：原生输入框 -->
         <input v-else
           v-model="form[field.key]"
@@ -116,6 +137,10 @@ const mixedPlateRefs = reactive({})
 
 // 输入模式记录（plate_or_vin 类型）
 const inputMode = reactive({})
+
+// 图片上传状态
+const uploading = reactive({})
+const uploadProgress = reactive({})
 
 const serviceIconUrl = computed(() => {
   return serviceIcon(service.value?.icon,API_BASE_URL)
@@ -217,9 +242,99 @@ function onKeyDelete() {
   }
 }
 
+// 图片选择和上传
+async function chooseImage(fieldKey) {
+  try {
+    const res = await new Promise((resolve, reject) => {
+      uni.chooseImage({
+        count: 1,
+        sizeType: ['compressed'],
+        sourceType: ['album', 'camera'],
+        success: resolve,
+        fail: reject
+      })
+    })
+
+    const filePath = res.tempFilePaths[0]
+    const fileInfo = res.tempFiles[0]
+
+    // 验证文件大小
+    if (fileInfo.size > 5 * 1024 * 1024) {
+      return uni.showToast({ title: '图片大小不能超过 5MB', icon: 'none' })
+    }
+
+    // 上传图片
+    uploading[fieldKey] = true
+    uploadProgress[fieldKey] = 0
+
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadTask = uni.uploadFile({
+        url: `${API_BASE_URL}/upload/image`,
+        filePath: filePath,
+        name: 'file',
+        formData: {
+          type: 'license'
+        },
+        header: {
+          Authorization: `Bearer ${uni.getStorageSync('token') || ''}`
+        },
+        success: (res) => {
+          if (res.statusCode === 200) {
+            try {
+              const data = JSON.parse(res.data)
+              if (data.code === 0) {
+                resolve(data.data)
+              } else {
+                reject(new Error(data.message || '上传失败'))
+              }
+            } catch (e) {
+              reject(new Error('解析响应失败'))
+            }
+          } else if (res.statusCode === 401) {
+            reject(new Error('登录已过期，请重新登录'))
+          } else {
+            reject(new Error('上传失败，状态码：' + res.statusCode))
+          }
+        },
+        fail: (err) => {
+          reject(new Error(err.errMsg || '网络错误'))
+        }
+      })
+
+      uploadTask.onProgressUpdate((res) => {
+        uploadProgress[fieldKey] = res.progress
+      })
+    })
+
+    // 上传成功，保存 URL
+    form.value[fieldKey] = uploadResult.url
+    uni.showToast({ title: '上传成功', icon: 'success' })
+
+  } catch (error) {
+    if (error.message !== 'chooseImage:fail cancel') {
+      uni.showToast({ title: error.message || '上传失败', icon: 'none' })
+    }
+  } finally {
+    uploading[fieldKey] = false
+    uploadProgress[fieldKey] = 0
+  }
+}
+
+function clearImage(fieldKey) {
+  form.value[fieldKey] = ''
+}
+
 async function submit() {
   if (service.value.status !== 1) return uni.showModal({ title:'功能维护', content:'此功能维护中，请稍后再试', showCancel:false })
   if (!accepted.value) return uni.showToast({ title:'请先同意授权协议与免责声明', icon:'none' })
+
+  // 检查必填的图片字段
+  for (const field of service.value.input_schema) {
+    if (field.type === 'image' && field.required && !form.value[field.key]) {
+      return uni.showToast({ title: `请上传${field.label}`, icon: 'none' })
+    }
+  }
+
   submitting.value = true
   const requestKey = newRequestKey()
   try {
@@ -416,6 +531,114 @@ function clearFlow() { uni.removeStorageSync(FLOW_KEY) }
         font-weight: 600;
       }
     }
+  }
+}
+
+/* 图片上传样式 */
+.image-upload-wrap {
+  margin-top: 10rpx;
+}
+
+.image-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 240rpx;
+  background: #f6f8fb;
+  border: 2rpx dashed #d0d7e2;
+  border-radius: 16rpx;
+  transition: all 0.2s;
+
+  &:active {
+    background: #edf0f5;
+    border-color: #aab3c0;
+  }
+
+  .upload-icon {
+    font-size: 60rpx;
+    color: #8d98a9;
+    font-weight: 300;
+    line-height: 1;
+  }
+
+  .upload-text {
+    font-size: 26rpx;
+    color: #6b7688;
+    margin-top: 16rpx;
+  }
+
+  .upload-hint {
+    font-size: 21rpx;
+    color: #aab3c0;
+    margin-top: 8rpx;
+  }
+}
+
+.image-preview {
+  position: relative;
+  background: #f6f8fb;
+  border-radius: 16rpx;
+  overflow: hidden;
+
+  .preview-image {
+    width: 100%;
+    height: 320rpx;
+    display: block;
+  }
+
+  .image-actions {
+    display: flex;
+    gap: 16rpx;
+    padding: 20rpx;
+    background: linear-gradient(180deg, transparent, rgba(0,0,0,0.3));
+
+    .action-btn {
+      flex: 1;
+      height: 72rpx;
+      line-height: 72rpx;
+      font-size: 26rpx;
+      font-weight: 600;
+      border-radius: 12rpx;
+      background: #fff;
+      color: #344158;
+      border: none;
+
+      &.danger {
+        background: #fff0f0;
+        color: #e3483e;
+      }
+
+      &:active {
+        opacity: 0.8;
+      }
+    }
+  }
+}
+
+.upload-progress {
+  margin-top: 16rpx;
+
+  .progress-bar {
+    height: 8rpx;
+    background: #edf0f5;
+    border-radius: 4rpx;
+    overflow: hidden;
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #175cd3, #4d8eff);
+      border-radius: 4rpx;
+      transition: width 0.3s ease;
+    }
+  }
+
+  .progress-text {
+    display: block;
+    text-align: center;
+    font-size: 22rpx;
+    color: #8d98a9;
+    margin-top: 10rpx;
   }
 }
 </style>

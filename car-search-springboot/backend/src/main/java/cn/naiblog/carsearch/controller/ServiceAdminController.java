@@ -4,6 +4,8 @@ import cn.naiblog.carsearch.api.*;
 import cn.naiblog.carsearch.security.CryptoService;
 import cn.naiblog.carsearch.service.*;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -26,33 +28,184 @@ import java.util.regex.Pattern;
 
 @RestController @RequestMapping("/admin-api")
 public class ServiceAdminController {
-    private static final Set<String>TYPES=Set.of("text","name","plate","plate_prefix","plate_or_vin","vin","idcard","identity");
+    private static final Logger log=LoggerFactory.getLogger(ServiceAdminController.class);
+    private static final Set<String>TYPES=Set.of("text","name","plate","plate_prefix","plate_or_vin","vin","idcard","identity","image");
     private static final Set<String>BUILTIN_ICONS=Set.of("car","vin","plate","verified","location","transfer","owner","etc","insurance","search","document","shield");
     private final JdbcTemplate jdbc;private final CryptoService crypto;private final ObjectMapper mapper;private final ProviderService provider;private final AuditService audit;private final Path icons;private final SecureRandom random=new SecureRandom();
     public ServiceAdminController(JdbcTemplate jdbc,CryptoService crypto,ObjectMapper mapper,ProviderService provider,AuditService audit,@Value("${car.storage-path:./runtime/uploads}")String storage){this.jdbc=jdbc;this.crypto=crypto;this.mapper=mapper;this.provider=provider;this.audit=audit;this.icons=Path.of(storage).toAbsolutePath().normalize().resolve("service-icons");}
 
-    @GetMapping("/services")public ApiResponse<List<Map<String,Object>>>list(){List<Map<String,Object>>rows=jdbc.queryForList("select s.id,s.code,s.category_id,c.name category_name,s.payment_product_id_android,s.payment_product_id_ios,s.name,s.short_name,s.description,s.icon,s.input_schema,s.result_schema,s.request_url_cipher,s.request_method,s.response_code_path,s.response_success_value,s.response_data_path,s.sale_price_android,s.sale_price_ios,s.cost_price,s.sort,s.status,s.updated_at from ci_service s left join ci_service_category c on c.id=s.category_id order by s.sort,s.id");rows.forEach(this::safe);return ApiResponse.ok(rows);}
+    @GetMapping("/services")public ApiResponse<List<Map<String,Object>>>list(){List<Map<String,Object>>rows=jdbc.queryForList("select s.id,s.code,s.category_id,c.name category_name,s.payment_product_id_android,s.payment_product_id_ios,s.name,s.short_name,s.description,s.icon,s.input_schema,s.result_schema,s.request_url_cipher,s.api_path,s.provider_api_id,s.request_method,s.response_code_path,s.response_success_value,s.response_data_path,s.sale_price_android,s.sale_price_ios,s.cost_price,s.sort,s.status,s.query_mode,s.fetch_api_path,s.poll_interval_sec,s.poll_timeout_sec,s.api_version,s.fetch_api_version,s.callback_mode,s.callback_secret,s.callback_timeout_sec,s.id_field_path,s.updated_at from ci_service s left join ci_service_category c on c.id=s.category_id order by s.sort,s.id");rows.forEach(this::safe);return ApiResponse.ok(rows);}
     @GetMapping("/encryption-health")public ApiResponse<Map<String,Object>>encryptionHealth(){List<String>values=jdbc.query("select request_url_cipher from ci_service where request_url_cipher is not null and request_url_cipher<>''",(rs,n)->rs.getString(1));long readable=values.stream().filter(crypto::canDecrypt).count();return ApiResponse.ok(Map.of("key_fingerprint",crypto.keyFingerprint(),"encrypted_count",values.size(),"decryptable_count",readable,"healthy",readable==values.size()));}
-    @PostMapping("/services")public ApiResponse<Map<String,Object>>create(@RequestBody Map<String,Object>b,HttpServletRequest req){int supplied=integer(b.get("service_id"));if(supplied>0)return update(supplied,b,req);Validated v=validate(b,null);if(scalar("select count(*) from ci_service where code=?",v.code)>0)throw new BusinessException("服务编码已存在");LocalDateTime now=LocalDateTime.now();jdbc.update("insert into ci_service(code,payment_product_id,payment_product_id_android,payment_product_id_ios,provider_api_id,category_id,name,short_name,description,icon,input_schema,result_schema,provider_key_cipher,request_url_cipher,request_method,response_code_path,response_success_value,response_data_path,sale_price,sale_price_android,sale_price_ios,cost_price,sort,status,created_at,updated_at) values(?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",v.code,v.productAndroid,v.productAndroid,v.productIos,v.categoryId,v.name,v.shortName,v.description,"builtin:"+v.icon,json(v.inputs),json(v.results),crypto.encrypt(Map.of("key","")),crypto.encrypt(Map.of("url",v.url)),v.method,v.codePath,v.successValue,v.dataPath,v.saleAndroid,v.saleAndroid,v.saleIos,v.cost,scalar("select coalesce(max(sort),0)+1 from ci_service"),v.status,now,now);int id=jdbc.queryForObject("select last_insert_id()",Integer.class);audit.record(req,"service.create","service",String.valueOf(id),Map.of("code",v.code));return ApiResponse.ok(Map.of("id",id),"接口服务已创建");}
-    @PostMapping({"/services/{id}","/services/{id}/update"})public ApiResponse<Map<String,Object>>update(@PathVariable int id,@RequestBody Map<String,Object>b,HttpServletRequest req){Map<String,Object>old=find(id);if(integer(b.get("service_id"))>0&&integer(b.get("service_id"))!=id)throw new BusinessException("接口服务ID不一致，请刷新页面后重试");Validated v=validate(b,old);String icon=text(b.get("builtin_icon"));if(!BUILTIN_ICONS.contains(icon))icon=text(old.get("icon"));else icon="builtin:"+icon;jdbc.update("update ci_service set payment_product_id=?,payment_product_id_android=?,payment_product_id_ios=?,category_id=?,name=?,short_name=?,description=?,icon=?,input_schema=?,result_schema=?,request_method=?,response_code_path=?,response_success_value=?,response_data_path=?,sale_price=?,sale_price_android=?,sale_price_ios=?,cost_price=?,status=?,request_url_cipher=?,updated_at=? where id=?",v.productAndroid,v.productAndroid,v.productIos,v.categoryId,v.name,v.shortName,v.description,icon,json(v.inputs),json(v.results),v.method,v.codePath,v.successValue,v.dataPath,v.saleAndroid,v.saleAndroid,v.saleIos,v.cost,v.status,v.url.isBlank()?old.get("request_url_cipher"):crypto.encrypt(Map.of("url",v.url)),LocalDateTime.now(),id);audit.record(req,"service.update","service",String.valueOf(id),Map.of("fields",b.keySet()));return ApiResponse.ok(Map.of("id",id),"接口服务已保存");}
+    @PostMapping("/services")public ApiResponse<Map<String,Object>>create(@RequestBody Map<String,Object>b,HttpServletRequest req){int supplied=integer(b.get("service_id"));if(supplied>0)return update(supplied,b,req);Validated v=validate(b,null);if(scalar("select count(*) from ci_service where code=?",v.code)>0)throw new BusinessException("服务编码已存在");LocalDateTime now=LocalDateTime.now();jdbc.update("insert into ci_service(code,payment_product_id,payment_product_id_android,payment_product_id_ios,provider_api_id,category_id,name,short_name,description,icon,input_schema,result_schema,provider_key_cipher,request_url_cipher,api_path,request_method,response_code_path,response_success_value,response_data_path,sale_price,sale_price_android,sale_price_ios,cost_price,sort,status,query_mode,fetch_api_path,poll_interval_sec,poll_timeout_sec,api_version,fetch_api_version,callback_mode,callback_secret,callback_timeout_sec,id_field_path,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",v.code,v.productAndroid,v.productAndroid,v.productIos,v.providerApiId,v.categoryId,v.name,v.shortName,v.description,"builtin:"+v.icon,json(v.inputs),json(v.results),crypto.encrypt(Map.of("key","")),v.providerApiId>0?"":crypto.encrypt(Map.of("url",v.url)),v.apiPath,v.method,v.codePath,v.successValue,v.dataPath,v.saleAndroid,v.saleAndroid,v.saleIos,v.cost,scalar("select coalesce(max(sort),0)+1 from ci_service"),v.status,v.queryMode,v.fetchApiPath,v.pollIntervalSec,v.pollTimeoutSec,v.apiVersion,v.fetchApiVersion,v.callbackMode,v.callbackSecret,v.callbackTimeoutSec,v.idFieldPath,now,now);int id=jdbc.queryForObject("select last_insert_id()",Integer.class);audit.record(req,"service.create","service",String.valueOf(id),Map.of("code",v.code));return ApiResponse.ok(Map.of("id",id),"接口服务已创建");}
+    @PostMapping({"/services/{id}","/services/{id}/update"})public ApiResponse<Map<String,Object>>update(@PathVariable int id,@RequestBody Map<String,Object>b,HttpServletRequest req){Map<String,Object>old=find(id);if(integer(b.get("service_id"))>0&&integer(b.get("service_id"))!=id)throw new BusinessException("接口服务ID不一致，请刷新页面后重试");Validated v=validate(b,old);String icon=text(b.get("builtin_icon"));if(!BUILTIN_ICONS.contains(icon))icon=text(old.get("icon"));else icon="builtin:"+icon;
+        Object urlCipher;
+        if(v.providerApiId>0) urlCipher=""; else urlCipher=v.url.isBlank()?old.get("request_url_cipher"):crypto.encrypt(Map.of("url",v.url));
+        jdbc.update("update ci_service set payment_product_id=?,payment_product_id_android=?,payment_product_id_ios=?,provider_api_id=?,category_id=?,name=?,short_name=?,description=?,icon=?,input_schema=?,result_schema=?,request_method=?,response_code_path=?,response_success_value=?,response_data_path=?,sale_price=?,sale_price_android=?,sale_price_ios=?,cost_price=?,status=?,request_url_cipher=?,api_path=?,query_mode=?,fetch_api_path=?,poll_interval_sec=?,poll_timeout_sec=?,api_version=?,fetch_api_version=?,callback_mode=?,callback_secret=?,callback_timeout_sec=?,id_field_path=?,updated_at=? where id=?",v.productAndroid,v.productAndroid,v.productIos,v.providerApiId,v.categoryId,v.name,v.shortName,v.description,icon,json(v.inputs),json(v.results),v.method,v.codePath,v.successValue,v.dataPath,v.saleAndroid,v.saleAndroid,v.saleIos,v.cost,v.status,urlCipher,v.apiPath,v.queryMode,v.fetchApiPath,v.pollIntervalSec,v.pollTimeoutSec,v.apiVersion,v.fetchApiVersion,v.callbackMode,v.callbackSecret,v.callbackTimeoutSec,v.idFieldPath,LocalDateTime.now(),id);audit.record(req,"service.update","service",String.valueOf(id),Map.of("fields",b.keySet()));return ApiResponse.ok(Map.of("id",id),"接口服务已保存");}
     @PostMapping("/service-test/{id}")public ApiResponse<Map<String,Object>>test(@PathVariable int id,@RequestBody(required=false)Map<String,Object>b,HttpServletRequest req){Map<String,Object>s=find(id);List<Map<String,Object>>schema=parseInputs(text(s.get("input_schema")));Map<String,Object>input=InputValidator.validate(schema,map(b==null?null:b.get("input")));long start=System.nanoTime();try{ProviderService.Result r=provider.query(s,input);long ms=(System.nanoTime()-start)/1_000_000;audit.record(req,"service.test","service",String.valueOf(id),Map.of("success",true,"provider_code",r.code(),"duration_ms",ms));return ApiResponse.ok(Map.of("success",true,"provider_code",r.code(),"provider_request_id",r.requestId(),"duration_ms",ms,"data",r.data()),"接口测试成功");}catch(Exception e){long ms=(System.nanoTime()-start)/1_000_000;String code=e instanceof ProviderQueryException p?p.providerCode():"transport_error";String rid=e instanceof ProviderQueryException p?p.providerRequestId():"";audit.record(req,"service.test","service",String.valueOf(id),Map.of("success",false,"provider_code",code,"duration_ms",ms));return ApiResponse.ok(Map.of("success",false,"provider_code",code,"provider_request_id",rid,"duration_ms",ms,"error",safeError(e)),"接口测试失败");}}
+
+    /** 模拟回调测试：用假数据触发回调流程，不调用供应商 */
+    @PostMapping("/callback-simulate/{id}")@Transactional
+    public ApiResponse<Map<String,Object>>simulateCallback(@PathVariable int id,@RequestBody Map<String,Object>b){
+        Map<String,Object>s=find(id);
+        if(!"callback".equals(String.valueOf(s.getOrDefault("callback_mode","none"))))
+            throw new BusinessException("该服务未启用回调模式");
+        String queryId=text(b.get("query_id"));
+        Map<String,Object>fakeBody=map(b.get("body"));
+        if(queryId.isBlank())throw new BusinessException("请填写 query_id");
+        if(fakeBody.isEmpty())throw new BusinessException("请填写回调 body 数据");
+
+        // 检查 ci_query 是否存在
+        List<Map<String,Object>>queries=jdbc.queryForList(
+                "select id,status from ci_query where query_id=? and service_id=?",queryId,id);
+        if(queries.isEmpty())throw new BusinessException("未找到对应的查询记录 ci_query，请先下单");
+
+        // 模拟回调：调用 QueryCallbackController 的逻辑
+        String callbackSecret=String.valueOf(s.getOrDefault("callback_secret","")).trim();
+        String signature=callbackSecret.isBlank()?null:callbackSecret;
+
+        // 直接更新 ci_query
+        String resultJson;
+        try{resultJson=mapper.writeValueAsString(fakeBody);}catch(Exception e){resultJson="{}";}
+        String resultCode=String.valueOf(fakeBody.getOrDefault("number","200"));
+        LocalDateTime now=LocalDateTime.now();
+        jdbc.update(
+                "update ci_query set status='completed', result_json=?, result_code=?, result_message='模拟回调', callback_received_at=?, completed_at=?, updated_at=? where query_id=? and status in ('pending','processing')",
+                resultJson,resultCode,now,now,now,queryId);
+
+        // 更新订单
+        List<Map<String,Object>>orders=jdbc.queryForList(
+                "select id,order_no from ci_order where provider_request_id=? and status='querying'",queryId);
+        if(!orders.isEmpty()){
+            Map<String,Object>order=orders.getFirst();
+            Object resultObj=fakeBody.get("result");
+            Map<String,Object>resultData=resultObj instanceof Map?cast(resultObj):fakeBody;
+            try{
+                List<Map<String,Object>>normalized=provider.normalize(s,resultData);
+                jdbc.update("update ci_order set status='success',provider_code=?,result_cipher=?,queried_at=?,updated_at=? where id=?",
+                        resultCode,crypto.encrypt(Map.of("items",normalized)),now,now,order.get("id"));
+            }catch(Exception e){
+                log.error("[SimulateCallback] normalize失败",e);
+                throw new BusinessException("数据解析失败: "+e.getMessage());
+            }
+        }
+
+        return ApiResponse.ok(Map.of("query_id",queryId,"ci_query_status","completed","orders_updated",orders.size()),"模拟回调完成");
+    }
+
+    @SuppressWarnings("unchecked")private Map<String,Object>cast(Object o){return(Map<String,Object>)o;}
 
     @PostMapping("/service-icon-upload/{id}")public ApiResponse<Map<String,Object>>upload(@PathVariable int id,@RequestParam("icon")MultipartFile file,HttpServletRequest req)throws Exception{Map<String,Object>s=find(id);if(file.isEmpty()||file.getSize()>48*1024)throw new BusinessException("图标大小需在 48KB 以内");String content=Optional.ofNullable(file.getContentType()).orElse("").toLowerCase(Locale.ROOT);String ext=switch(content){case"image/png"->"png";case"image/jpeg"->"jpg";case"image/webp"->"webp";default->throw new BusinessException("图标仅支持 PNG、JPG 或 WebP 格式");};byte[]data=file.getBytes();int[]dimensions=imageDimensions(data,ext);if(dimensions==null||dimensions[0]<32||dimensions[1]<32||dimensions[0]>1024||dimensions[1]>1024)throw new BusinessException("图标文件内容无效，或尺寸不在 32×32 至 1024×1024 像素之间");Files.createDirectories(icons);byte[]bytes=new byte[16];random.nextBytes(bytes);String filename=HexFormat.of().formatHex(bytes)+"."+ext;Path target=icons.resolve(filename).normalize();if(!target.getParent().equals(icons))throw new BusinessException("图标文件名无效");file.transferTo(target);jdbc.update("update ci_service set icon=?,updated_at=? where id=?",filename,LocalDateTime.now(),id);deleteIcon(text(s.get("icon")),filename);audit.record(req,"service.icon.upload","service",String.valueOf(id),Map.of("filename",filename,"mime",content,"size",file.getSize(),"width",dimensions[0],"height",dimensions[1]));return ApiResponse.ok(Map.of("id",id,"icon",filename,"icon_url","/api/v1/service-icon/"+filename),"服务图标已更新");}
     @PostMapping("/services/sort")@Transactional public ApiResponse<Object>sort(@RequestBody Map<String,Object>b,HttpServletRequest req){List<Integer>ids=b.get("ids")instanceof List<?>l?l.stream().map(this::integer).filter(i->i>0).toList():List.of();List<Integer>current=jdbc.queryForList("select id from ci_service order by id",Integer.class);List<Integer>a=new ArrayList<>(ids),c=new ArrayList<>(current);Collections.sort(a);Collections.sort(c);if(ids.size()<2||!a.equals(c))throw new BusinessException("排序数据不完整，请刷新页面后重试");for(int i=0;i<ids.size();i++)jdbc.update("update ci_service set sort=?,updated_at=? where id=?",i+1,LocalDateTime.now(),ids.get(i));audit.record(req,"service.sort","service","",Map.of("ids",ids));return ApiResponse.ok(null,"排序已保存");}
     @DeleteMapping("/services/{id}")public ApiResponse<Object>delete(@PathVariable int id,HttpServletRequest req){Map<String,Object>s=find(id);if(scalar("select count(*) from ci_order where service_id=?",id)>0)throw new BusinessException("该接口已有历史订单，不能删除，请将状态设为隐藏");jdbc.update("delete from ci_service where id=?",id);deleteIcon(text(s.get("icon")),"");audit.record(req,"service.delete","service",String.valueOf(id),Map.of("code",s.get("code")));return ApiResponse.ok(null,"接口服务已删除");}
 
-    private Validated validate(Map<String,Object>b,Map<String,Object>old){String code=old==null?text(b.get("code")):text(old.get("code"));String name=text(b.get("name")),shortName=text(b.get("short_name")),description=text(b.get("description")),productAndroid=text(b.get("payment_product_id_android")),productIos=text(b.get("payment_product_id_ios"));if(!code.matches("[a-z][a-z0-9_]{2,39}"))throw new BusinessException("服务编码格式不正确");if(name.isBlank()||name.length()>80||shortName.isBlank()||shortName.length()>40||description.length()>255)throw new BusinessException("服务名称、简称或说明格式不正确");if(!validProduct(productAndroid)||!validProduct(productIos))throw new BusinessException("微信支付道具ID格式不正确");int categoryId=integer(b.get("category_id"));if(categoryId<1||scalar("select count(*) from ci_service_category where id=?",categoryId)==0)throw new BusinessException("请选择有效的服务分类");String icon=text(b.getOrDefault("builtin_icon",old==null?"car":""));if(old==null&&!BUILTIN_ICONS.contains(icon))throw new BusinessException("请选择有效的服务图标");int status=integer(b.getOrDefault("status",0));String method=text(b.getOrDefault("request_method","GET")).toUpperCase(Locale.ROOT);if(!Set.of(0,1,2).contains(status)||!Set.of("GET","POST").contains(method))throw new BusinessException("接口状态或请求方式无效");if(status==1&&(productAndroid.isBlank()||productIos.isBlank()))throw new BusinessException("运行状态必须同时填写安卓与 iOS 微信支付道具ID");List<Map<String,Object>>inputs=validInputs(list(b.get("input_schema")));Map<String,Object>results=validResults(list(b.get("result_schema")));String url=text(b.getOrDefault("api_url",b.get("request_url")));if(old==null&&url.isBlank())throw new BusinessException("请填写完整接口 URL");if(!url.isBlank())validateUrl(url);if(status==1&&url.isBlank()&&(old==null||crypto.decrypt(text(old.get("request_url_cipher"))).getOrDefault("url","").toString().isBlank()))throw new BusinessException("运行状态必须配置完整接口 URL；当前密文不可解密时请重新填写后保存");BigDecimal saleAndroid=decimal(b.get("sale_price_android")),saleIos=decimal(b.get("sale_price_ios")),cost=decimal(b.get("cost_price"));if(!validPrice(saleAndroid)||!validPrice(saleIos)||(status==1&&(saleAndroid.compareTo(BigDecimal.ONE)<0||saleIos.compareTo(BigDecimal.ONE)<0)))throw new BusinessException("安卓与 iOS 售价范围无效；正式虚拟支付不得低于1元");if(cost.signum()<0||cost.compareTo(new BigDecimal("99999"))>0)throw new BusinessException("成本价格范围无效");return new Validated(code,productAndroid,productIos,categoryId,icon,name,shortName,description,inputs,results,url,method,cut(text(b.getOrDefault("response_code_path","code")),100),cut(text(b.getOrDefault("response_success_value","200")),50),cut(text(b.getOrDefault("response_data_path","data")),100),saleAndroid,saleIos,cost,status);}
+    private Validated validate(Map<String,Object>b,Map<String,Object>old){String code=old==null?text(b.get("code")):text(old.get("code"));String name=text(b.get("name")),shortName=text(b.get("short_name")),description=text(b.get("description")),productAndroid=text(b.get("payment_product_id_android")),productIos=text(b.get("payment_product_id_ios"));if(!code.matches("[a-z][a-z0-9_]{2,39}"))throw new BusinessException("服务编码格式不正确");if(name.isBlank()||name.length()>80||shortName.isBlank()||shortName.length()>40||description.length()>255)throw new BusinessException("服务名称、简称或说明格式不正确");if(!validProduct(productAndroid)||!validProduct(productIos))throw new BusinessException("微信支付道具ID格式不正确");int categoryId=integer(b.get("category_id"));if(categoryId<1||scalar("select count(*) from ci_service_category where id=?",categoryId)==0)throw new BusinessException("请选择有效的服务分类");String icon=text(b.getOrDefault("builtin_icon",old==null?"car":""));if(old==null&&!BUILTIN_ICONS.contains(icon))throw new BusinessException("请选择有效的服务图标");int status=integer(b.getOrDefault("status",0));String method=text(b.getOrDefault("request_method","GET")).toUpperCase(Locale.ROOT);if(!Set.of(0,1,2).contains(status)||!Set.of("GET","POST").contains(method))throw new BusinessException("接口状态或请求方式无效");if(status==1&&(productAndroid.isBlank()||productIos.isBlank()))throw new BusinessException("运行状态必须同时填写安卓与 iOS 微信支付道具ID");List<Map<String,Object>>inputs=validInputs(list(b.get("input_schema")));Map<String,Object>results=validResults(list(b.get("result_schema")));
+
+        // 供应商模式 vs 直连模式
+        int providerApiId=integer(b.get("provider_api_id"));
+        String apiPath=cut(text(b.get("api_path")),500);
+        String url=text(b.getOrDefault("api_url",b.get("request_url")));
+
+        // 异步查询模式配置
+        String queryMode=text(b.getOrDefault("query_mode","single"));
+        if(!Set.of("single","async").contains(queryMode))throw new BusinessException("查询模式无效");
+        String fetchApiPath=cut(text(b.get("fetch_api_path")),500);
+        int pollIntervalSec=integer(b.getOrDefault("poll_interval_sec",5));
+        int pollTimeoutSec=integer(b.getOrDefault("poll_timeout_sec",120));
+        String apiVersion=cut(text(b.get("api_version")),20);
+        String fetchApiVersion=cut(text(b.get("fetch_api_version")),20);
+        if("async".equals(queryMode)){
+            if(providerApiId<=0)throw new BusinessException("异步查询模式必须选择供应商");
+            if(fetchApiPath.isBlank())throw new BusinessException("异步查询模式必须填写获取报告接口路径");
+            if(pollIntervalSec<2)throw new BusinessException("轮询间隔不能小于2秒");
+            if(pollTimeoutSec<10||pollTimeoutSec>300)throw new BusinessException("轮询超时范围为10-300秒");
+        }
+
+        // 回调模式配置
+        String callbackMode=text(b.getOrDefault("callback_mode","none"));
+        if(!Set.of("none","callback").contains(callbackMode))throw new BusinessException("回调模式无效");
+        String callbackSecret=cut(text(b.get("callback_secret")),128);
+        int callbackTimeoutSec=integer(b.getOrDefault("callback_timeout_sec",120));
+        String idFieldPath=cut(text(b.get("id_field_path")),100);
+        if("callback".equals(callbackMode)){
+            if(providerApiId<=0)throw new BusinessException("回调模式必须选择供应商");
+            if(callbackTimeoutSec<30||callbackTimeoutSec>600)throw new BusinessException("回调超时范围为30-600秒");
+        }
+
+        if(providerApiId>0){
+            // 供应商模式：校验供应商存在且启用了
+            if(scalar("select count(*) from ci_provider where id=? and status=1",providerApiId)==0)
+                throw new BusinessException("选择的供应商不存在或已禁用");
+            if(apiPath.isBlank())throw new BusinessException("供应商模式下请填写接口路径");
+            if(status==1&&apiPath.isBlank())throw new BusinessException("运行状态必须填写接口路径");
+        }else{
+            // 直连模式：现有逻辑
+            if(old==null&&url.isBlank())throw new BusinessException("请填写完整接口 URL");
+            if(!url.isBlank())validateUrl(url);
+            if(status==1&&url.isBlank()&&(old==null||crypto.decrypt(text(old.get("request_url_cipher"))).getOrDefault("url","").toString().isBlank()))throw new BusinessException("运行状态必须配置完整接口 URL；当前密文不可解密时请重新填写后保存");
+        }
+
+        BigDecimal saleAndroid=decimal(b.get("sale_price_android")),saleIos=decimal(b.get("sale_price_ios")),cost=decimal(b.get("cost_price"));if(!validPrice(saleAndroid)||!validPrice(saleIos)||(status==1&&(saleAndroid.compareTo(BigDecimal.ONE)<0||saleIos.compareTo(BigDecimal.ONE)<0)))throw new BusinessException("安卓与 iOS 售价范围无效；正式虚拟支付不得低于1元");if(cost.signum()<0||cost.compareTo(new BigDecimal("99999"))>0)throw new BusinessException("成本价格范围无效");return new Validated(code,productAndroid,productIos,categoryId,icon,name,shortName,description,inputs,results,url,apiPath,providerApiId,method,cut(text(b.getOrDefault("response_code_path","code")),100),cut(text(b.getOrDefault("response_success_value","200")),50),cut(text(b.getOrDefault("response_data_path","data")),100),saleAndroid,saleIos,cost,status,queryMode,fetchApiPath,pollIntervalSec,pollTimeoutSec,apiVersion,fetchApiVersion,callbackMode,callbackSecret,callbackTimeoutSec,idFieldPath);}
     private boolean validProduct(String value){return value.length()<=128&&!value.matches(".*[\\x00-\\x20\\x7f].*");}
     private boolean validPrice(BigDecimal value){return value.compareTo(new BigDecimal("0.01"))>=0&&value.compareTo(new BigDecimal("99999"))<=0;}
     private List<Map<String,Object>>validInputs(List<?>rows){List<Map<String,Object>>out=new ArrayList<>();Set<String>keys=new HashSet<>();for(Object o:rows){Map<String,Object>r=map(o);String key=text(r.get("key")),label=text(r.get("label")),type=text(r.getOrDefault("type","text"));if(!key.matches("[A-Za-z][A-Za-z0-9_]{0,49}")||!keys.add(key)||label.isBlank()||label.length()>50||!TYPES.contains(type))throw new BusinessException("请求字段配置无效或重复");out.add(Map.of("key",key,"label",label,"type",type,"required",Boolean.parseBoolean(text(r.getOrDefault("required",false)))));}if(out.isEmpty())throw new BusinessException("至少配置一个用户输入字段");return out;}
-    private Map<String,Object>validResults(List<?>rows){Map<String,Object>out=new LinkedHashMap<>();for(Object o:rows){Map<String,Object>r=map(o);String key=text(r.get("key")),label=text(r.get("label"));if(!key.matches("[A-Za-z0-9_.-]{1,100}")||label.isBlank()||label.length()>50||out.containsKey(key))throw new BusinessException("结果字段配置无效或重复");out.put(key,label);}if(out.isEmpty())throw new BusinessException("至少配置一个结果展示字段");return out;}
+    private Map<String,Object>validResults(List<?>rows){Map<String,Object>out=new LinkedHashMap<>();for(Object o:rows){Map<String,Object>r=map(o);String key=text(r.get("key")),label=text(r.get("label"));if(!key.matches("[A-Za-z0-9_.-]{1,98}(\\[\\])?")||label.isBlank()||label.length()>50||out.containsKey(key))throw new BusinessException("结果字段配置无效或重复");out.put(key,label);}if(out.isEmpty())throw new BusinessException("至少配置一个结果展示字段");return out;}
     private void validateUrl(String value){try{URI uri=URI.create(value);if(!"https".equalsIgnoreCase(uri.getScheme())||uri.getHost()==null||uri.getUserInfo()!=null||value.length()>3000||value.chars().anyMatch(Character::isWhitespace))throw new Exception();}catch(Exception e){throw new BusinessException("接口 URL 必须是无账号信息的 HTTPS 地址");}}
     private Map<String,Object>find(int id){List<Map<String,Object>>r=jdbc.queryForList("select * from ci_service where id=?",id);if(r.isEmpty())throw new BusinessException(404,HttpStatus.NOT_FOUND,"接口服务不存在");return r.getFirst();}
-    private void safe(Map<String,Object>r){String cipher=text(r.get("request_url_cipher"));Map<String,Object>d=crypto.decrypt(cipher);String url=text(d.get("url"));r.remove("request_url_cipher");r.put("api_url_configured",!url.isBlank());r.put("api_url",url);r.put("api_url_error",!cipher.isBlank()&&!d.containsKey("url"));r.put("input_schema",parseInputs(text(r.get("input_schema"))));Map<String,Object>results=jsonMap(text(r.get("result_schema")));r.put("result_schema",results.entrySet().stream().map(e->Map.of("key",e.getKey(),"label",e.getValue())).toList());}
+    private void safe(Map<String,Object>r){
+        int providerId=r.get("provider_api_id")instanceof Number n?n.intValue():0;
+        String cipher=text(r.get("request_url_cipher"));
+        Map<String,Object>d=crypto.decrypt(cipher);
+        String url=text(d.get("url"));
+        r.remove("request_url_cipher");
+        if(providerId>0){
+            // 加载供应商信息
+            List<Map<String,Object>>prows=jdbc.queryForList("select id,name,code,base_url from ci_provider where id=?",providerId);
+            if(!prows.isEmpty()){
+                Map<String,Object>p=prows.getFirst();
+                r.put("provider_name",p.get("name"));
+                r.put("provider_code",p.get("code"));
+                // 拼接完整URL用于显示
+                String baseUrl=String.valueOf(p.get("base_url")).trim();
+                String apiPath=String.valueOf(r.getOrDefault("api_path","")).trim();
+                String fullUrl="";
+                if(!baseUrl.isBlank()&&!apiPath.isBlank()){
+                    fullUrl=baseUrl.endsWith("/")?baseUrl.substring(0,baseUrl.length()-1):baseUrl;
+                    fullUrl+=apiPath.startsWith("/")?apiPath:"/"+apiPath;
+                }
+                r.put("api_url_configured",!fullUrl.isBlank());
+                r.put("api_url",fullUrl);
+                r.put("api_url_error",false);
+            }else{
+                r.put("api_url_configured",false);
+                r.put("api_url","");
+                r.put("api_url_error",true);
+                r.put("provider_name","供应商不存在");
+                r.put("provider_code","");
+            }
+        }else{
+            r.put("api_url_configured",!url.isBlank());
+            r.put("api_url",url);
+            r.put("api_url_error",!cipher.isBlank()&&!d.containsKey("url"));
+        }
+        r.put("input_schema",parseInputs(text(r.get("input_schema"))));
+        Map<String,Object>results=jsonMap(text(r.get("result_schema")));
+        r.put("result_schema",results.entrySet().stream().map(e->Map.of("key",e.getKey(),"label",e.getValue())).toList());
+        // 确保异步查询字段有默认值
+        r.putIfAbsent("query_mode","single");
+        r.putIfAbsent("fetch_api_path","");
+        r.putIfAbsent("poll_interval_sec",5);
+        r.putIfAbsent("poll_timeout_sec",120);
+        r.putIfAbsent("api_version","");
+        r.putIfAbsent("fetch_api_version","");
+        r.putIfAbsent("callback_mode","none");
+        r.putIfAbsent("callback_secret","");
+        r.putIfAbsent("callback_timeout_sec",120);
+        r.putIfAbsent("id_field_path","");
+    }
     private int[]imageDimensions(byte[]data,String ext){try{if("png".equals(ext)&&!(data.length>24&&data[0]==(byte)0x89&&data[1]==0x50&&data[2]==0x4e&&data[3]==0x47))return null;if("jpg".equals(ext)&&!(data.length>3&&data[0]==(byte)0xff&&data[1]==(byte)0xd8))return null;if(!"webp".equals(ext)){BufferedImage image=ImageIO.read(new ByteArrayInputStream(data));return image==null?null:new int[]{image.getWidth(),image.getHeight()};}if(data.length<30||!ascii(data,0,"RIFF")||!ascii(data,8,"WEBP"))return null;if(ascii(data,12,"VP8X"))return new int[]{1+le24(data,24),1+le24(data,27)};if(ascii(data,12,"VP8 ")&&data.length>=30&&data[23]==(byte)0x9d&&data[24]==0x01&&data[25]==0x2a)return new int[]{le16(data,26)&0x3fff,le16(data,28)&0x3fff};if(ascii(data,12,"VP8L")&&data.length>=25&&data[20]==0x2f){int width=1+(((data[22]&0x3f)<<8)|(data[21]&0xff));int height=1+(((data[24]&0x0f)<<10)|((data[23]&0xff)<<2)|((data[22]&0xc0)>>6));return new int[]{width,height};}}catch(Exception ignored){}return null;}
     private boolean ascii(byte[]data,int at,String value){if(at<0||at+value.length()>data.length)return false;for(int i=0;i<value.length();i++)if((data[at+i]&0xff)!=value.charAt(i))return false;return true;}
     private int le16(byte[]data,int at){return(data[at]&0xff)|((data[at+1]&0xff)<<8);}private int le24(byte[]data,int at){return le16(data,at)|((data[at+2]&0xff)<<16);}
     private void deleteIcon(String name,String except){if(name.equals(except)||!name.matches("[a-f0-9]{32}\\.(png|jpg|webp)"))return;try{Files.deleteIfExists(icons.resolve(name).normalize());}catch(Exception ignored){}}
     private List<Map<String,Object>>parseInputs(String json){try{return mapper.readValue(json,new TypeReference<>(){});}catch(Exception e){return List.of();}}private Map<String,Object>jsonMap(String json){try{return mapper.readValue(json,new TypeReference<LinkedHashMap<String,Object>>(){});}catch(Exception e){return Map.of();}}private String json(Object o){try{return mapper.writeValueAsString(o);}catch(Exception e){throw new BusinessException("JSON 配置无效");}}private String safeError(Exception e){String v=text(e.getMessage());return cut(v.isBlank()?"接口连接失败":v,300);}private long scalar(String s,Object...a){Long v=jdbc.queryForObject(s,Long.class,a);return v==null?0:v;}private int integer(Object v){try{return v instanceof Number n?n.intValue():Integer.parseInt(text(v));}catch(Exception e){return 0;}}private BigDecimal decimal(Object v){try{return new BigDecimal(text(v));}catch(Exception e){return BigDecimal.ZERO;}}private String text(Object v){return v==null?"":String.valueOf(v).trim();}private String cut(String s,int n){return s.length()<=n?s:s.substring(0,n);}@SuppressWarnings("unchecked")private Map<String,Object>map(Object v){return v instanceof Map<?,?>m?(Map<String,Object>)m:Map.of();}private List<?>list(Object v){return v instanceof List<?>l?l:List.of();}
-    private record Validated(String code,String productAndroid,String productIos,int categoryId,String icon,String name,String shortName,String description,List<Map<String,Object>>inputs,Map<String,Object>results,String url,String method,String codePath,String successValue,String dataPath,BigDecimal saleAndroid,BigDecimal saleIos,BigDecimal cost,int status){}
+    private record Validated(String code,String productAndroid,String productIos,int categoryId,String icon,String name,String shortName,String description,List<Map<String,Object>>inputs,Map<String,Object>results,String url,String apiPath,int providerApiId,String method,String codePath,String successValue,String dataPath,BigDecimal saleAndroid,BigDecimal saleIos,BigDecimal cost,int status,String queryMode,String fetchApiPath,int pollIntervalSec,int pollTimeoutSec,String apiVersion,String fetchApiVersion,String callbackMode,String callbackSecret,int callbackTimeoutSec,String idFieldPath){}
 }

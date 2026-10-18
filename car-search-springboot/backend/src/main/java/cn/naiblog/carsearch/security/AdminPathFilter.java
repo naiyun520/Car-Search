@@ -17,7 +17,7 @@ import java.util.Set;
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)
 public class AdminPathFilter extends OncePerRequestFilter {
-    private static final Set<String> ASSETS=Set.of("index.html","style.css","enhancements.css","app.js","errors.js","settings.js","services.js","dashboard.js","echarts.min.js");
+    private static final Set<String> ASSETS=Set.of("index.html","style.css","enhancements.css","app.js","errors.js","settings.js","providers.js","services.js","dashboard.js","echarts.min.js");
     private final SettingService settings;
     public AdminPathFilter(SettingService settings){this.settings=settings;}
 

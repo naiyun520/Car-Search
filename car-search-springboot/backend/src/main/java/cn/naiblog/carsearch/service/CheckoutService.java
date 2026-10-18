@@ -61,6 +61,22 @@ public class CheckoutService {
             }
         }
         if("payment_review".equals(o.get("status")))r.put("message","支付信息需要人工核对，请勿重复支付并联系客服");
+        // 回调模式：返回 query_id 供前端轮询
+        if("querying".equals(String.valueOf(o.get("status")))){
+            String providerRequestId=String.valueOf(o.getOrDefault("provider_request_id",""));
+            if(!providerRequestId.isBlank()){
+                r.put("query_id",providerRequestId);
+                // 获取服务的回调超时时间，估算等待时间
+                int serviceId=o.get("service_id")instanceof Number n?n.intValue():0;
+                if(serviceId>0){
+                    List<Map<String,Object>> services=jdbc.queryForList("select callback_timeout_sec from ci_service where id=?",serviceId);
+                    if(!services.isEmpty()){
+                        int timeoutSec=((Number)services.getFirst().getOrDefault("callback_timeout_sec",120)).intValue();
+                        r.put("estimated_wait",timeoutSec<=60?"1":timeoutSec<=180?"1-3":"3-5");
+                    }
+                }
+            }
+        }
         return r;
     }
     private void delivery(Map<String,Object>o){delivery.deliver(String.valueOf(o.get("order_no")),false);}

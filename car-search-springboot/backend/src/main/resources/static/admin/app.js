@@ -5,7 +5,7 @@ if(location.search) history.replaceState(null,document.title,location.pathname+l
 let token=localStorage.getItem('admin_token')||''
 let currentPage='dashboard'
 let pageRequestId=0
-const pages={dashboard:['数据概览','实时掌握小程序运营情况'],orders:['订单管理','搜索、核验并处理每一笔订单'],wechatMessages:['微信消息','查看消息推送入口收到的全部事件'],users:['用户管理','按用户ID、手机号或昵称查询用户'],services:['接口、分类与价格','动态管理分类、接口字段、双端价格与运行状态'],announcements:['弹窗公告','配置公告内容和不再弹出的时长'],settings:['系统与支付','管理后台地址、客服、隐私和支付开关']}
+const pages={dashboard:['数据概览','实时掌握小程序运营情况'],orders:['订单管理','搜索、核验并处理每一笔订单'],wechatMessages:['微信消息','查看消息推送入口收到的全部事件'],users:['用户管理','按用户ID、手机号或昵称查询用户'],providers:['供应商管理','管理第三方数据供应商的认证与连接配置'],services:['接口、分类与价格','动态管理分类、接口字段、双端价格与运行状态'],announcements:['弹窗公告','配置公告内容和不再弹出的时长'],settings:['系统与支付','管理后台地址、客服、隐私和支付开关']}
 const $=selector=>document.querySelector(selector)
 const escapeHtml=value=>String(value??'').replace(/[&<>"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[char]))
 
@@ -121,7 +121,7 @@ function showOrderDetail(row){
   document.querySelector('.dialog-mask:last-of-type').onclick=event=>{if(event.target.closest('.dialog-close'))event.currentTarget.remove()}
 }
 
-function detailItems(data){if(!data||((Array.isArray(data)||typeof data==='object')&&Object.keys(data).length===0))return '<div class="detail-empty">暂无数据</div>';const rows=Array.isArray(data)?data.map((item,index)=>[item.label||item.key||`字段 ${index+1}`,item.value??item]):Object.entries(data);return rows.map(([key,value])=>`<div><span>${escapeHtml(key)}</span><b>${escapeHtml(typeof value==='object'?JSON.stringify(value,null,2):value)}</b></div>`).join('')}
+function detailItems(data,depth){if(depth==null)depth=0;if(!data||((Array.isArray(data)||typeof data==='object')&&Object.keys(data).length===0))return '<div class="detail-empty">暂无数据</div>';const rows=Array.isArray(data)?data.map((item,index)=>{const label=item.label||item.key||`字段 ${index+1}`;const value=item.value??item;return[label,value]}):Object.entries(data);return rows.map(([key,value])=>{if(value==null||value==='')return `<div><span>${escapeHtml(key)}</span><b>暂无数据</b></div>`;if(Array.isArray(value)){if(value.length===0)return `<div><span>${escapeHtml(key)}</span><b>空列表</b></div>`;const first=value[0];if(first&&typeof first==='object'&&!Array.isArray(first)){const nested=value.map((item,idx)=>`<div class="nested-item"><div class="nested-item-head">#${idx+1}</div>${detailItems(item,depth+1)}</div>`).join('');return `<div class="nested-array"><span>${escapeHtml(key)} <small>(${value.length}条)</small></span><div class="nested-array-body">${nested}</div></div>`}return `<div><span>${escapeHtml(key)}</span><b>${value.map(v=>escapeHtml(String(v))).join('、')}</b></div>`}if(typeof value==='object'){return `<div class="nested-map"><span>${escapeHtml(key)}</span><div class="nested-map-body">${detailItems(value,depth+1)}</div></div>`}return `<div><span>${escapeHtml(key)}</span><b>${escapeHtml(String(value))}</b></div>`}).join('')}
 
 async function renderUsers(){
   const query=new URLSearchParams({keyword:userState.keyword,page:String(userState.page)})

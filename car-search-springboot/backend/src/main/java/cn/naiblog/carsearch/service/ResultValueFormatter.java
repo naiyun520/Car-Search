@@ -1,5 +1,8 @@
 package cn.naiblog.carsearch.service;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -9,26 +12,162 @@ import java.util.Map;
 public final class ResultValueFormatter {
     private ResultValueFormatter() { }
 
-    public static Object format(String key,Object value){
-        String path=key==null?"":key;
-        String last=path.substring(path.lastIndexOf('.')+1);
-        if(!List.of("state","status").contains(last))return value;
-        Integer code=null;
-        if(value instanceof Number n)code=n.intValue();
-        else if(value instanceof String s)try{code=Integer.parseInt(s.trim());}catch(NumberFormatException ignored){}
-        if(code==null)return value;
-        return switch(code){case 1->"匹配";case 2->"不匹配";case 3->"查询成功无结果";default->"未知";};
+    private static final DateTimeFormatter DATE_FMT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai"));
+
+    /** 已知的 Unix 时间戳字段名后缀 */
+    private static final List<String> TIMESTAMP_SUFFIXES = List.of(
+            "time", "date", "dateline", "timestamp", "updated_at", "created_at"
+    );
+
+    /**
+     * 格式化单个值：枚举翻译、时间戳转换。
+     * 对于 Map/List 嵌套结构不做序列化，原样返回供前端结构化渲染。
+     */
+    public static Object format(String key, Object value) {
+        if (value == null) return null;
+
+        // 时间戳转换：10位秒级数字 → 可读日期（兼容 Number 和 String 类型）
+        if (isTimestampField(key)) {
+            Long ts = null;
+            if (value instanceof Number n) ts = n.longValue();
+            else if (value instanceof String s) {
+                String trimmed = s.trim();
+                if (!trimmed.isEmpty() && !trimmed.contains("-")) {
+                    try { ts = Long.parseLong(trimmed); } catch (NumberFormatException ignored) {}
+                }
+            }
+            if (ts != null && ts > 1_000_000_000L && ts < 2_000_000_000L) {
+                return DATE_FMT.format(Instant.ofEpochSecond(ts));
+            }
+            // 0 表示未记录
+            if (ts != null && ts == 0L && isTimestampField(key)) {
+                return "无记录";
+            }
+        }
+
+        // 枚举翻译（仅处理简单值）
+        String path = key == null ? "" : key;
+        String last = path.substring(path.lastIndexOf('.') + 1);
+        if (List.of("state", "status").contains(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) {
+                return switch (code) {
+                    case 1 -> "匹配";
+                    case 2 -> "不匹配";
+                    case 3 -> "查询成功无结果";
+                    default -> "未知";
+                };
+            }
+        }
+
+        // result_status 枚举（维保等接口）
+        if ("result_status".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) {
+                return switch (code) {
+                    case 1 -> "查询成功";
+                    case 2 -> "查询中";
+                    case 3 -> "查询失败";
+                    default -> code;
+                };
+            }
+        }
+
+        // car_is_fire / car_is_water 布尔映射
+        if ("car_is_fire".equals(last) || "car_is_water".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) return code == 1 ? "是" : "否";
+        }
+
+        // kilomete_is_normal
+        if ("kilomete_is_normal".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) return code == 1 ? "正常" : "异常";
+        }
+
+        // is_repair（维修详情中的是否维修过）
+        if ("is_repair".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) {
+                return switch (code) {
+                    case 0 -> "无";
+                    case 1 -> "有";
+                    case 2 -> "未知";
+                    default -> code;
+                };
+            }
+        }
+
+        // Map/List 嵌套结构：递归格式化内部字段
+        if (value instanceof Map<?, ?> m) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            for (var entry : m.entrySet()) {
+                String childKey = key + "." + entry.getKey();
+                result.put(String.valueOf(entry.getKey()), format(childKey, entry.getValue()));
+            }
+            return result;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> result = new ArrayList<>(list.size());
+            for (int i = 0; i < list.size(); i++) {
+                Object item = list.get(i);
+                if (item instanceof Map<?, ?> m) {
+                    // 对列表中的 Map 递归格式化
+                    Map<String, Object> formatted = new LinkedHashMap<>();
+                    for (var entry : m.entrySet()) {
+                        String childKey = key + "." + entry.getKey();
+                        formatted.put(String.valueOf(entry.getKey()), format(childKey, entry.getValue()));
+                    }
+                    result.add(formatted);
+                } else {
+                    result.add(format(key + "[" + i + "]", item));
+                }
+            }
+            return result;
+        }
+
+        return value;
     }
 
-    public static List<Map<String,Object>> formatItems(Object raw){
-        if(!(raw instanceof List<?> list))return List.of();
-        List<Map<String,Object>> result=new ArrayList<>(list.size());
-        for(Object item:list){
-            if(!(item instanceof Map<?,?> source))continue;
-            Map<String,Object> copy=new LinkedHashMap<>();
-            source.forEach((key,value)->copy.put(String.valueOf(key),value));
-            String key=String.valueOf(copy.getOrDefault("key",""));
-            if(copy.containsKey("value"))copy.put("value",format(key,copy.get("value")));
+    /** 判断字段名是否可能是时间戳 */
+    private static boolean isTimestampField(String key) {
+        if (key == null) return false;
+        String lower = key.toLowerCase();
+        for (String suffix : TIMESTAMP_SUFFIXES) {
+            if (lower.endsWith(suffix) || lower.contains("dateline") || lower.contains("timestamp")) return true;
+        }
+        return false;
+    }
+
+    /** 格式化数组：递归处理每个元素（时间戳、枚举等） */
+    public static List<Object> formatList(String key, List<?> list) {
+        List<Object> result = new ArrayList<>(list.size());
+        for (Object item : list) {
+            result.add(format(key, item));
+        }
+        return result;
+    }
+
+    public static List<Map<String, Object>> formatItems(Object raw) {
+        if (!(raw instanceof List<?> list)) return List.of();
+        List<Map<String, Object>> result = new ArrayList<>(list.size());
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> source)) continue;
+            Map<String, Object> copy = new LinkedHashMap<>();
+            source.forEach((key, value) -> copy.put(String.valueOf(key), value));
+            String key = String.valueOf(copy.getOrDefault("key", ""));
+            if (copy.containsKey("value")) copy.put("value", format(key, copy.get("value")));
             result.add(copy);
         }
         return result;

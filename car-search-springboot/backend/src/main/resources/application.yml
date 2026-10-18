@@ -1,9 +1,11 @@
 spring:
   application:
     name: car-search-backend
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
   datasource:
-    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/car_inquiry?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
-    username: ${DB_USERNAME:car_inquiry}
+    url: ${DB_URL:jdbc:mysql://134.175.249.169:3306/car_v2?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:car_v2}
     password: ${DB_PASSWORD:}
     hikari:
       maximum-pool-size: ${DB_POOL_SIZE:10}
@@ -13,8 +15,8 @@ spring:
     default-property-inclusion: non_null
   servlet:
     multipart:
-      max-file-size: 64KB
-      max-request-size: 96KB
+      max-file-size: 5MB
+      max-request-size: 6MB
 server:
   port: ${PORT:8080}
   forward-headers-strategy: framework
@@ -23,7 +25,7 @@ server:
     min-response-size: 1KB
     mime-types: application/json,text/html,text/css,application/javascript,image/svg+xml
   tomcat:
-    max-http-form-post-size: 32KB
+    max-http-form-post-size: 10MB
     threads:
       max: ${TOMCAT_MAX_THREADS:100}
       min-spare: ${TOMCAT_MIN_SPARE_THREADS:10}
@@ -42,6 +44,8 @@ car:
   # 本地界面联调专用。生产环境必须保持 false；即使开启也只接受回环地址请求。
   dev-login-enabled: ${CAR_DEV_LOGIN_ENABLED:false}
   storage-path: ${CAR_STORAGE_PATH:./runtime/uploads}
+  # 供应商回调基础URL（完整域名，不含路径），用于构建回调地址
+  callback-base-url: ${CAR_CALLBACK_BASE_URL:}
   wechat:
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}

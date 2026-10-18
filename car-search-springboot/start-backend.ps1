@@ -3,9 +3,9 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Logs = Join-Path $Root '.local\logs'
 $Repo = Join-Path $Root '.local\maven-repo'
 $PidFile = Join-Path $Root '.local\backend.pid'
-$EnvFile = Join-Path $Root '.env.local'
+$EnvFile = Join-Path $Root '.env'
 New-Item -ItemType Directory -Force -Path $Logs | Out-Null
-if (-not (Test-Path -LiteralPath $EnvFile)) { throw '.env.local is missing' }
+if (-not (Test-Path -LiteralPath $EnvFile)) { throw '.env is missing' }
 Get-Content -LiteralPath $EnvFile | ForEach-Object {
     if ($_ -match '^\s*([^#][^=]*)=(.*)$') {
         [Environment]::SetEnvironmentVariable($Matches[1].Trim(), $Matches[2], 'Process')

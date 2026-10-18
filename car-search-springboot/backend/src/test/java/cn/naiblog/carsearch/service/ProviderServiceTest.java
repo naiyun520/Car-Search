@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class ProviderServiceTest {
-    private final ProviderService provider = new ProviderService(null, new ObjectMapper());
+    private final ProviderService provider = new ProviderService(null, new ObjectMapper(), null, "");
 
     @Test
     void getQueryEncodesChinesePlateExactlyOnce() throws Exception {

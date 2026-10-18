@@ -14,7 +14,13 @@ public class QueryRunnerService {
     public QueryRunnerService(JdbcTemplate jdbc,CryptoService crypto,ProviderService provider,PaymentDeliveryService delivery,EmailNotificationService email){this.jdbc=jdbc;this.crypto=crypto;this.provider=provider;this.delivery=delivery;this.email=email;}
     public Map<String,Object> run(Map<String,Object> order){String status=String.valueOf(order.get("status"));if(List.of("success","query_failed","querying").contains(status)||!"paid".equals(status))return Map.of("status",status);int claimed=jdbc.update("update ci_order set status='querying',query_attempts=query_attempts+1,query_last_error=null,updated_at=? where id=? and status='paid'",LocalDateTime.now(),order.get("id"));if(claimed==0)return Map.of("status",String.valueOf(jdbc.queryForObject("select status from ci_order where id=?",String.class,order.get("id"))));
         Map<String,Object> service=orderService(order);if(service==null){fail(order,"error","","订单服务快照不可用");email.queryFailed(order.get("id"),"error","","订单服务快照不可用");return Map.of("status","query_failed");}
-        try{ProviderService.Result r=provider.query(service,crypto.decrypt(String.valueOf(order.get("input_cipher"))));LocalDateTime now=LocalDateTime.now();jdbc.update("update ci_order set status='success',provider_code=?,provider_request_id=?,query_last_error=null,result_cipher=?,queried_at=?,updated_at=? where id=?",r.code(),empty(r.requestId()),crypto.encrypt(Map.of("items",r.data())),now,now,order.get("id"));}
+        try{ProviderService.Result r=provider.query(service,crypto.decrypt(String.valueOf(order.get("input_cipher"))));LocalDateTime now=LocalDateTime.now();
+        if("processing".equals(r.code())){
+            // 回调模式：下单成功，等待回调。保持 querying 状态，存储 query_id
+            jdbc.update("update ci_order set status='querying',provider_code='processing',provider_request_id=?,query_last_error=null,queried_at=?,updated_at=? where id=?",empty(r.requestId()),now,now,order.get("id"));
+            return Map.of("status","querying","query_id",r.requestId());
+        }
+        jdbc.update("update ci_order set status='success',provider_code=?,provider_request_id=?,query_last_error=null,result_cipher=?,queried_at=?,updated_at=? where id=?",r.code(),empty(r.requestId()),crypto.encrypt(Map.of("items",r.data())),now,now,order.get("id"));}
         catch(Exception e){String code=e instanceof ProviderQueryException p?p.providerCode():"error";String rid=e instanceof ProviderQueryException p?p.requestId():"";String message=truncate(e.getMessage(),500);fail(order,code,rid,message);email.queryFailed(order.get("id"),code,rid,message);return Map.of("status","query_failed");}
         try{delivery.deliver(String.valueOf(order.get("order_no")),false);}catch(Exception ignored){}
         email.querySucceeded(order.get("id"));

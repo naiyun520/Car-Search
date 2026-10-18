@@ -12,12 +12,6 @@
       <view class="hero-desc">权威数据 · 专业解析 · 安全可靠</view>
     </view>
     <view class="content">
-      <view class="assurance">
-        <view class="assurance-item"><view class="assurance-icon"><image src="/static/icons/features/authority.svg" /></view><text>数据权威</text></view>
-        <view class="assurance-item"><view class="assurance-icon"><image src="/static/icons/features/quick.svg" /></view><text>查询快捷</text></view>
-        <view class="assurance-item"><view class="assurance-icon"><image src="/static/icons/features/complete.svg" /></view><text>信息全面</text></view>
-        <view class="assurance-item"><view class="assurance-icon"><image src="/static/icons/features/privacy.svg" /></view><text>隐私安全</text></view>
-      </view>
       <view class="search-box card">
         <text class="search-icon">⌕</text>
         <input v-model="keyword" placeholder="搜索车辆信息、VIN、车牌等服务" confirm-type="search" @input="onSearchInput" />
@@ -133,36 +127,32 @@ function closeAnnouncement(fromButton) {
 
 <style lang="scss" scoped>
 .home { background: #f3f7fc; }
-.hero { height: 560rpx; padding: 0 34rpx; color: #fff; position: relative; overflow: hidden; background: #0757bc; }
+.hero { height: 500rpx; padding: 0 34rpx; color: #fff; position: relative; overflow: hidden; background: #0757bc; }
 .hero-image, .hero-shade { position: absolute; inset: 0; width: 100%; height: 100%; }
 .hero-shade { background: linear-gradient(90deg, rgba(2,42,112,.96) 0%, rgba(8,78,175,.76) 50%, rgba(13,101,210,.18) 100%); }
-.safe-top { height: calc(var(--status-bar-height) + 24rpx); }
-.brand-row { position: relative; top: 20px; display: flex; align-items: center; gap: 16rpx; }
+.safe-top { height: calc(var(--status-bar-height) + 36rpx); }
+.brand-row { position: relative; top: 24px; display: flex; align-items: center; gap: 18rpx; }
 .brand-icon { width: 76rpx; height: 76rpx; border: 2rpx solid rgba(255,255,255,.7); border-radius: 20rpx; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; box-shadow: 0 8rpx 22rpx rgba(1,35,92,.18); }
 .brand-icon image { width: 68rpx; height: 68rpx; }
 .brand-name { font-size: 34rpx; font-weight: 800; letter-spacing: 2rpx; }
-.brand-sub { font-size: 20rpx; opacity: .82; margin-top: 5rpx; }
-.hero-title { position: relative; margin-top: 50rpx; font-size: 51rpx; font-weight: 800; line-height: 1.32; letter-spacing: 2rpx; }
-.hero-desc { position: relative; margin-top: 15rpx; font-size: 23rpx; opacity: .88; }
-.content { padding: 0 24rpx 42rpx; margin-top: -42rpx; position: relative; }
-.assurance { min-height: 152rpx; margin: 0 -24rpx; padding: 30rpx 25rpx 22rpx; display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; background: #fff; border-radius: 52rpx 52rpx 0 0; box-shadow: 0 -10rpx 30rpx rgba(6,72,153,.06); }
-.assurance-item { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 11rpx; color: #263a57; font-size: 22rpx; font-weight: 650; line-height: 1; white-space: nowrap; }
-.assurance-icon { width: 64rpx; height: 64rpx; display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 6rpx 8rpx rgba(12,99,224,.16)); }
-.assurance-icon image { width: 64rpx; height: 64rpx; }
-.search-box { height: 96rpx; margin-top: 0; display: flex; align-items: center; padding: 0 24rpx; border-radius: 22rpx; }
+.brand-sub { font-size: 20rpx; opacity: .82; margin-top: 8rpx; }
+.hero-title { position: relative; margin-top: 48rpx; font-size: 48rpx; font-weight: 800; line-height: 1.4; letter-spacing: 2rpx; }
+.hero-desc { position: relative; margin-top: 24rpx; font-size: 23rpx; opacity: .88; }
+.content { padding: 24rpx 24rpx 42rpx; margin-top: -30rpx; position: relative; background: #fff; border-radius: 40rpx 40rpx 0 0; }
+.search-box { height: 96rpx; display: flex; align-items: center; padding: 0 24rpx; border-radius: 22rpx; }
 .search-icon { font-size: 40rpx; color: #6e8098; margin-right: 14rpx; }
 .search-box input { flex: 1; font-size: 26rpx; }
 .clear { padding: 12rpx; color: #95a1b2; }
-.category-scroll { width: 100%; white-space: nowrap; margin: 22rpx 0 30rpx; }
+.category-scroll { width: 100%; white-space: nowrap; margin: 18rpx 0 20rpx; }
 .category-row { display: flex; width: max-content; min-width: 100%; gap: 14rpx; padding: 2rpx 8rpx 12rpx 2rpx; box-sizing: border-box; }
 .category { flex: none; height: 64rpx; padding: 0 27rpx; border-radius: 32rpx; background: #fff; color: #66758b; display: flex; align-items: center; font-size: 24rpx; border: 1rpx solid #e4eaf2; }
 .category.active { background: #126bee; border-color: #126bee; color: #fff; box-shadow: 0 8rpx 20rpx rgba(18,107,238,.24); }
-.section-head { display: flex; align-items: flex-end; justify-content: space-between; margin: 0 8rpx 20rpx; }
+.section-head { display: flex; align-items: flex-end; justify-content: space-between; margin: 0 8rpx 16rpx; }
 .section-title { font-size: 34rpx; font-weight: 800; }
 .section-sub { display: block; font-size: 21rpx; color: #929dab; margin-top: 7rpx; }
 .count { font-size: 22rpx; color: #7f8b9d; }
-.service-list { display: flex; flex-direction: column; gap: 16rpx; }
-.service-card { min-height: 150rpx; padding: 21rpx 19rpx 21rpx 22rpx; display: flex; align-items: center; border: 1rpx solid #eaf0f7; border-radius: 22rpx; box-shadow: 0 8rpx 22rpx rgba(31,75,126,.065); }
+.service-list { display: flex; flex-direction: column; gap: 14rpx; }
+.service-card { min-height: 130rpx; padding: 18rpx 19rpx 18rpx 22rpx; display: flex; align-items: center; border: 1rpx solid #eaf0f7; border-radius: 22rpx; box-shadow: 0 8rpx 22rpx rgba(31,75,126,.065); }
 .service-icon { width: 84rpx; height: 84rpx; border-radius: 22rpx; background: #eaf3ff; padding: 14rpx; flex: none; }
 .service-icon image { width: 100%; height: 100%; }
 .service-main { flex: 1; min-width: 0; margin-left: 22rpx; }
@@ -171,7 +161,7 @@ function closeAnnouncement(fromButton) {
 .service-badge { min-width: 72rpx; padding: 7rpx 11rpx 6rpx; border-radius: 20rpx; box-sizing: border-box; text-align: center; font-size: 19rpx; font-weight: 650; line-height: 1.1; }
 .normal-badge { background: #e4faee; color: #06a567; }
 .maintenance-badge { background: #fff3dd; color: #9b6300; }
-.service-meta { font-size: 21rpx; color: #8995a7; margin-top: 12rpx; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.service-meta { font-size: 21rpx; color: #8995a7; margin-top: 8rpx; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .arrow { margin-top: 24rpx; padding-right: 8rpx; font-size: 38rpx; line-height: 1; color: #8298b4; }
 .empty { margin-top: 10rpx; }
 .modal-mask { position: fixed; inset: 0; background: rgba(8,20,39,.58); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 45rpx; }

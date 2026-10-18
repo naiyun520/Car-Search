@@ -15,7 +15,8 @@ public final class InputValidator {
             "plate_prefix", Pattern.compile("^[\\p{IsHan}][A-Z](?:[A-Z0-9]{5,6})?$"),
             "plate_or_vin", Pattern.compile("^(?:[A-HJ-NPR-Z0-9]{17}|[\\p{IsHan}][A-Z][A-Z0-9]{5,6})$"),
             "idcard", Pattern.compile("^\\d{17}[0-9X]$", Pattern.CASE_INSENSITIVE),
-            "identity", Pattern.compile("^(?:\\d{17}[0-9X]|[0-9A-Z]{18})$", Pattern.CASE_INSENSITIVE));
+            "identity", Pattern.compile("^(?:\\d{17}[0-9X]|[0-9A-Z]{18})$", Pattern.CASE_INSENSITIVE),
+            "image", Pattern.compile("^https?://.+\\.(jpg|jpeg|png|webp|gif)(\\?.*)?$", Pattern.CASE_INSENSITIVE));
 
     public static Map<String,Object> validate(List<Map<String,Object>> schema, Map<String,Object> input) {
         Map<String,Object> clean = new LinkedHashMap<>();
@@ -33,5 +34,11 @@ public final class InputValidator {
             clean.put(key, value);
         }
         return clean;
+    }
+
+    /** 验证图片 URL（用于上传后的验证） */
+    public static boolean isValidImageUrl(String url) {
+        if (url == null || url.isBlank()) return false;
+        return PATTERNS.get("image").matcher(url.trim()).matches();
     }
 }
