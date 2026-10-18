@@ -1,5 +1,5 @@
 const serviceStatus = value => ({0:['维护','wait'],1:['运行','success'],2:['隐藏','fail']}[Number(value)] || ['未知',''])
-const inputTypes = [['text','普通文本'],['name','姓名'],['plate','车牌号'],['plate_prefix','车牌或前缀'],['plate_or_vin','车牌或VIN'],['vin','VIN'],['idcard','身份证号'],['identity','证件/企业代码'],['image','图片（行驶证等）']]
+const inputTypes = [['text','普通文本'],['name','姓名'],['plate','车牌号'],['plate_prefix','车牌或前缀'],['plate_or_vin','车牌或VIN'],['vin','VIN'],['idcard','身份证号'],['identity','证件/企业代码'],['image','图片（行驶证等）'],['select','下拉选择']]
 
 let serviceRows = []
 let serviceCategories = []
@@ -61,7 +61,13 @@ function openCategoryEditor(category){const item=category||{code:'',name:'',icon
 function openServiceTest(service) {
   if (!service.api_url_configured && !(Number(service.provider_api_id)>0 && service.api_path)) return toast('请先编辑并保存完整接口 URL 或选择供应商并填写接口路径')
   const isCallbackMode = service.callback_mode === 'callback'
-  const fields=(service.input_schema||[]).map(field=>`<label>${escapeHtml(field.label)}${field.required?' <span class="required-mark">*</span>':''}<input class="test-input" data-key="${escapeHtml(field.key)}" placeholder="请输入有效${escapeHtml(field.label)}" maxlength="100" ${field.required?'required':''}></label>`).join('')
+  const fields=(service.input_schema||[]).map(field=>{
+    if(field.type==='select'&&Array.isArray(field.options)){
+      const opts=field.options.map(o=>`<option value="${escapeHtml(o.value)}" ${o.value===field.default?'selected':''}>${escapeHtml(o.label)}</option>`).join('')
+      return `<label>${escapeHtml(field.label)}${field.required?' <span class="required-mark">*</span>':''}<select class="test-input" data-key="${escapeHtml(field.key)}">${opts}</select></label>`
+    }
+    return `<label>${escapeHtml(field.label)}${field.required?' <span class="required-mark">*</span>':''}<input class="test-input" data-key="${escapeHtml(field.key)}" placeholder="请输入有效${escapeHtml(field.label)}" maxlength="100" ${field.required?'required':''}></label>`
+  }).join('')
   const callbackSection = isCallbackMode ? `
     <div class="detail-block" style="margin-top:16px;border:1px solid #b8d4e8;border-radius:8px;padding:16px;background:#f0f7fc">
       <h4 style="margin:0 0 8px">模拟回调测试</h4>
@@ -211,6 +217,12 @@ function openServiceEditor(service) {
   $('.add-input').onclick = () => $('#input-fields').insertAdjacentHTML('beforeend', inputRow({key:'',label:'',type:'text',required:false}))
   $('.add-result').onclick = () => $('#result-fields').insertAdjacentHTML('beforeend', resultRow({key:'',label:''}))
   $('#service-form').onclick = event => { const button=event.target.closest('.remove-row'); if(button && button.closest('.schema-row').parentElement.children.length>1) button.closest('.schema-row').remove() }
+  // select 类型切换：显示/隐藏选项编辑器
+  $('#input-fields').onchange = event => {
+    if (!event.target.classList.contains('field-type')) return
+    const editor = event.target.closest('.schema-row').querySelector('.select-options-editor')
+    if (editor) editor.style.display = event.target.value === 'select' ? '' : 'none'
+  }
   // 供应商下拉切换：显示/隐藏对应的输入区域
   const providerSelect = $('select[name="provider_api_id"]')
   if (providerSelect) {
@@ -257,7 +269,14 @@ function openServiceEditor(service) {
       fields.id_field_path=(fields.id_field_path||'').trim()
       fields.poll_interval_sec=Number(fields.poll_interval_sec||5)
       fields.poll_timeout_sec=Number(fields.poll_timeout_sec||120)
-      fields.input_schema=[...$('#input-fields').querySelectorAll('.schema-row')].map(row=>({key:row.querySelector('.field-key').value.trim(),label:row.querySelector('.field-label').value.trim(),type:row.querySelector('.field-type').value,required:row.querySelector('.field-required').checked}))
+      fields.input_schema=[...$('#input-fields').querySelectorAll('.schema-row')].map(row=>{
+        const schema={key:row.querySelector('.field-key').value.trim(),label:row.querySelector('.field-label').value.trim(),type:row.querySelector('.field-type').value,required:row.querySelector('.field-required').checked}
+        if(schema.type==='select'){
+          try{schema.options=JSON.parse(row.querySelector('.field-options').value.trim())}catch(e){schema.options=[]}
+          const def=row.querySelector('.field-default')?.value.trim();if(def)schema.default=def
+        }
+        return schema
+      })
       fields.result_schema=[...$('#result-fields').querySelectorAll('.schema-row')].map(row=>({key:row.querySelector('.result-key').value.trim(),label:row.querySelector('.result-label').value.trim()}))
       const saved=await api(service?`/services/${service.id}/update`:'/services',{method:'POST',data:fields})
       const serviceId=Number(saved?.id||service?.id||0)
@@ -279,5 +298,19 @@ function openServiceEditor(service) {
   }
 }
 
-function inputRow(row) { return `<div class="schema-row input-row"><input class="field-key" value="${escapeHtml(row.key)}" placeholder="参数名，如 chepai"><input class="field-label" value="${escapeHtml(row.label)}" placeholder="前端名称，如 车牌号"><select class="field-type">${inputTypes.map(type=>`<option value="${type[0]}" ${row.type===type[0]?'selected':''}>${type[1]}</option>`).join('')}</select><label class="check-label"><input class="field-required" type="checkbox" ${row.required?'checked':''}>必填</label><button type="button" class="action danger remove-row">删除</button></div>` }
+function inputRow(row) {
+  const optionsJson = row.options ? JSON.stringify(row.options) : '[{"value":"","label":""}]'
+  const showSelect = row.type === 'select'
+  return `<div class="schema-row input-row">
+    <input class="field-key" value="${escapeHtml(row.key)}" placeholder="参数名，如 chepai">
+    <input class="field-label" value="${escapeHtml(row.label)}" placeholder="前端名称，如 车牌号">
+    <select class="field-type">${inputTypes.map(type=>`<option value="${type[0]}" ${row.type===type[0]?'selected':''}>${type[1]}</option>`).join('')}</select>
+    <label class="check-label"><input class="field-required" type="checkbox" ${row.required?'checked':''}>必填</label>
+    <button type="button" class="action danger remove-row">删除</button>
+    <div class="select-options-editor" style="${showSelect?'':'display:none'};width:100%;margin-top:8px">
+      <label style="font-size:12px;color:#666">选项（JSON数组，每项含 value 和 label）<textarea class="field-options" rows="3" style="width:100%;font-family:monospace;font-size:12px">${escapeHtml(optionsJson)}</textarea></label>
+      <label style="font-size:12px;color:#666">默认值 <input class="field-default" value="${escapeHtml(row.default||'')}" placeholder="留空则不设默认" style="width:150px"></label>
+    </div>
+  </div>`
+}
 function resultRow(row) { return `<div class="schema-row result-row"><input class="result-key" value="${escapeHtml(row.key)}" placeholder="如 vin 或 content[]（数组）"><input class="result-label" value="${escapeHtml(row.label)}" placeholder="展示名称"><button type="button" class="action danger remove-row">删除</button></div>` }
