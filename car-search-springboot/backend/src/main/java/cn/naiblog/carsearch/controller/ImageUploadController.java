@@ -44,7 +44,7 @@ public class ImageUploadController {
             @Value("${car.storage-path:./runtime/uploads}") String storagePath,
             @Value("${car.upload-base-url:}") String baseUrl,
             ApiSupport api) {
-        this.uploadDir = Path.of(storagePath).toAbsolutePath().normalize().resolve("uploads");
+        this.uploadDir = Path.of(storagePath).toAbsolutePath().normalize();
         this.baseUrl = baseUrl;
         this.api = api;
     }

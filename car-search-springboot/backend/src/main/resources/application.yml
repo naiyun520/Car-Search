@@ -43,7 +43,7 @@ car:
   data-encrypt-key: ${DATA_ENCRYPT_KEY:}
   # 本地界面联调专用。生产环境必须保持 false；即使开启也只接受回环地址请求。
   dev-login-enabled: ${CAR_DEV_LOGIN_ENABLED:false}
-  storage-path: ${CAR_STORAGE_PATH:./runtime}
+  storage-path: ${CAR_STORAGE_PATH:./runtime/uploads}
   # 供应商回调基础URL（完整域名，不含路径），用于构建回调地址
   callback-base-url: ${CAR_CALLBACK_BASE_URL:}
   wechat:
