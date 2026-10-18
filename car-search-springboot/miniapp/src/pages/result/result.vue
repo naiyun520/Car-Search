@@ -7,6 +7,14 @@
       <view class="result-sub">供应商正在处理您的查询，请稍候...</view>
       <view class="querying-hint">预计等待时间：{{ order.estimated_wait || '1-3' }} 分钟</view>
       <view class="querying-elapsed">已等待 {{ elapsed }} 秒</view>
+      <button class="refresh-btn" @click="manualRefresh">手动刷新</button>
+    </view>
+
+    <!-- 结果已销毁 -->
+    <view class="result-head destroyed-head" v-else-if="isDestroyed">
+      <view class="result-icon" style="background:#fff4e0;color:#d48806">!</view>
+      <view class="result-title">结果已销毁</view>
+      <view class="result-sub">{{ order.message || '查询结果已销毁，退出后无法再次查看' }}</view>
     </view>
 
     <!-- 正常结果头 -->
@@ -31,7 +39,7 @@
       </template>
     </view>
 
-    <view class="result-card card" v-if="!isMissing && !isQuerying && order.result?.length">
+    <view class="result-card card" v-if="!isMissing && !isQuerying && !isDestroyed && order.result?.length">
       <view class="card-title">{{ order.service_name }}</view>
       <template v-for="item in order.result" :key="item.key">
         <!-- 数组字段：卡片列表 -->
@@ -57,7 +65,7 @@
     </view>
     <view class="card order-card"><view><text>订单编号</text><text selectable>{{ order.order_no }}</text></view></view>
 
-    <view class="warning-card card" v-if="!isMissing && !isQuerying">
+    <view class="warning-card card" v-if="!isMissing && !isQuerying && !isDestroyed">
       <view class="warning-icon">!</view>
       <view class="warning-content"><view class="warning-title">重要提示</view><view class="warning-text">查询结果仅在当前页面有效，退出后信息将自动销毁。如需再次查询，需重新付费。请务必自行保存查询结果。</view></view>
     </view>
@@ -68,7 +76,7 @@
 </template>
 <script setup>
 import { computed, ref, onUnmounted } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShow, onPullDownRefresh } from '@dcloudio/uni-app'
 import { checkoutRequest, request } from '../../utils/request'
 
 const APPLE_REFUND_URL='https://support.apple.com/zh-cn/118223'
@@ -76,16 +84,39 @@ const order=ref({})
 const elapsed=ref(0)
 const isQuerying=computed(()=>order.value.status==='querying')
 const isMissing=computed(()=>['query_failed','refunding','refunded'].includes(order.value.status)&&!order.value.result?.length)
+const isDestroyed=computed(()=>order.value.result_destroyed===true)
 const refundText=computed(()=>({requesting:'退款申请提交中',processing:'退款处理中',refunded:'退款已完成',failed:'退款暂未成功，系统将自动重试'})[order.value.refund_status]||'系统将自动发起退款')
 
 let pollTimer=null
 let elapsedTimer=null
 
+let currentOrderNo=''
+
 onLoad(async options=>{
+  currentOrderNo=String(options.order_no||'')
   try{
-    order.value=await checkoutRequest('/checkout/status',{orderNo:String(options.order_no||'')})
+    order.value=await checkoutRequest('/checkout/status',{orderNo:currentOrderNo})
     if(isQuerying.value) startPolling()
   }catch(error){uni.showModal({title:'提示',content:error.message,showCancel:false})}
+})
+
+// 页面重新显示时刷新状态（从后台切回、从其他页面返回）
+onShow(async()=>{
+  if(!currentOrderNo) return
+  try{
+    const prev=order.value.status
+    order.value=await checkoutRequest('/checkout/status',{orderNo:currentOrderNo})
+    // 状态变化时停止轮询
+    if(prev==='querying'&&order.value.status!=='querying') stopPolling()
+    // 如果从非querying变为querying（极少见），启动轮询
+    if(prev!=='querying'&&order.value.status==='querying'&&!pollTimer) startPolling()
+  }catch(e){console.warn('[onShow] 刷新订单失败',e)}
+})
+
+// 下拉刷新
+onPullDownRefresh(async()=>{
+  await reloadOrder()
+  uni.stopPullDownRefresh()
 })
 
 onUnmounted(()=>{stopPolling()})
@@ -110,6 +141,14 @@ function stopPolling(){
   if(elapsedTimer){clearInterval(elapsedTimer);elapsedTimer=null}
 }
 
+async function manualRefresh(){await reloadOrder()}
+async function reloadOrder(){
+  try{
+    const prev=order.value.status
+    order.value=await checkoutRequest('/checkout/status',{orderNo:order.value.order_no||currentOrderNo})
+    if(prev==='querying'&&order.value.status!=='querying') stopPolling()
+  }catch(e){console.warn('[reloadOrder] 刷新失败',e)}
+}
 function openAppleRefund(){uni.setClipboardData({data:order.value.apple_refund_url||APPLE_REFUND_URL,success:()=>uni.showToast({title:'链接已复制',icon:'success'})})}
 function backHome(){uni.switchTab({url:'/pages/index/index'})}
 function isPlainObject(v){return v!==null&&typeof v==='object'&&!Array.isArray(v)}
@@ -135,4 +174,7 @@ function formatVal(v){if(v===null||v===undefined||v==='')return'暂无数据';if
 .querying-hint{font-size:24rpx;color:#5b8bb5;margin-top:16rpx;padding:12rpx 24rpx;background:rgba(91,139,181,0.1);border-radius:8rpx;display:inline-block}
 .querying-elapsed{font-size:22rpx;color:#8b96a7;margin-top:12rpx}
 @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
+.refresh-btn{margin-top:24rpx;height:72rpx;line-height:72rpx;border-radius:36rpx;background:#176bdf;color:#fff;font-size:26rpx;font-weight:600;border:none}
+.refresh-btn::after{border:none}
+.destroyed-head .result-icon{background:#fff4e0;color:#d48806;font-size:48rpx;font-weight:700}
 </style>

@@ -3,13 +3,11 @@ package cn.naiblog.carsearch.controller;
 import cn.naiblog.carsearch.security.CryptoService;
 import cn.naiblog.carsearch.service.PaymentDeliveryService;
 import cn.naiblog.carsearch.service.ProviderService;
-import cn.naiblog.carsearch.service.ResultValueFormatter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
-import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
@@ -243,10 +241,15 @@ public class QueryCallbackController {
             CompletableFuture.runAsync(() -> {
                 try {
                     providerService.pollForResult(serviceId, queryId);
+                    // 降级轮询成功，更新订单状态
+                    updateOrderFromFallback(serviceId, queryId);
                 } catch (Exception e) {
                     log.error("[Fallback] 降级轮询失败 queryId={}, error={}", queryId, e.getMessage(), e);
                     jdbc.update("update ci_query set status='failed', result_message=?, completed_at=?, updated_at=? where query_id=?",
                             "降级轮询失败: " + e.getMessage(), LocalDateTime.now(), LocalDateTime.now(), queryId);
+                    // 降级轮询也失败，更新订单为 query_failed
+                    jdbc.update("update ci_order set status='query_failed', updated_at=? where provider_request_id=? and status='querying'",
+                            LocalDateTime.now(), queryId);
                 }
             });
         } catch (Exception e) {
@@ -297,6 +300,28 @@ public class QueryCallbackController {
             try { delivery.deliver(String.valueOf(order.get("order_no")), false); } catch (Exception ignored) {}
         } catch (Exception e) {
             log.error("[Callback] 更新订单失败 queryId={}", queryId, e);
+        }
+    }
+
+    /**
+     * 降级轮询成功后，从 ci_query.result_json 解析数据并更新订单
+     */
+    private void updateOrderFromFallback(int serviceId, String queryId) {
+        try {
+            // 从 ci_query 读取降级轮询的结果
+            List<Map<String, Object>> queries = jdbc.queryForList(
+                    "select result_json from ci_query where query_id=? and status='completed'", queryId);
+            if (queries.isEmpty()) {
+                log.warn("[Fallback] 未找到已完成的查询记录 queryId={}", queryId);
+                return;
+            }
+            String resultJson = String.valueOf(queries.getFirst().getOrDefault("result_json", "{}"));
+            Map<String, Object> body = mapper.readValue(resultJson, new tools.jackson.core.type.TypeReference<Map<String, Object>>() {});
+
+            // 复用回调更新逻辑
+            updateOrderFromCallback(serviceId, queryId, body, "200");
+        } catch (Exception e) {
+            log.error("[Fallback] 更新订单失败 queryId={}", queryId, e);
         }
     }
 

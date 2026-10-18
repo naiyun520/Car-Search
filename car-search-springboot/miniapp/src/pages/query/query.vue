@@ -443,8 +443,11 @@ async function poll(orderNo) {
     if (order.status === 'paid') return fulfil(orderNo, order)
     if (order.status === 'query_failed') return finish(orderNo)
     if (['payment_review','cancelled','refunded'].includes(order.status)) throw finalError(order.message || statusMessage(order))
+    // 回调模式：querying 状态直接跳转结果页，让结果页接管长轮询
+    if (order.status === 'querying') return finish(orderNo)
   }
-  throw contactError(orderNo, '订单仍在处理中，请凭订单号联系客服核验')
+  // 超时后如果仍在 querying，也跳转结果页
+  return finish(orderNo)
 }
 
 async function resumePaidFlow(orderNo) {

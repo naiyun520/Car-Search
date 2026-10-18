@@ -46,7 +46,21 @@ public class CheckoutService {
     public Map<String,Object> detail(Map<String,Object> o){
         Map<String,Object> r=safe(o);
         if("success".equals(o.get("status"))&&o.get("result_cipher")!=null){
-            r.put("result",ResultValueFormatter.formatItems(crypto.decrypt(String.valueOf(o.get("result_cipher"))).getOrDefault("items",List.of())));
+            // 判断是否为二级查询（有 provider_request_id 说明是 async/callback 模式）
+            String providerRequestId=String.valueOf(o.getOrDefault("provider_request_id",""));
+            boolean isAsync=!providerRequestId.isBlank()&&!"null".equals(providerRequestId);
+
+            if(!isAsync&&o.get("result_viewed_at")!=null){
+                // 单次查询已查看过，不再返回结果
+                r.put("result_destroyed",true);
+                r.put("message","查询结果已销毁，退出后无法再次查看。如需再次查询请重新付费。");
+            }else{
+                r.put("result",ResultValueFormatter.formatItems(crypto.decrypt(String.valueOf(o.get("result_cipher"))).getOrDefault("items",List.of())));
+                // 单次查询首次查看，标记
+                if(!isAsync){
+                    jdbc.update("update ci_order set result_viewed_at=? where id=? and result_viewed_at is null",LocalDateTime.now(),o.get("id"));
+                }
+            }
             try{delivery(o);}catch(Exception ignored){}
         }
         if(Set.of("query_failed","refunding","refunded").contains(String.valueOf(o.get("status"))) && o.get("result_cipher")==null){

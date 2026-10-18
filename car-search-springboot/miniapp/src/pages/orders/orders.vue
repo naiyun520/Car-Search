@@ -1,8 +1,8 @@
 <template>
   <view class="page orders-page">
-    <view class="page-head"><view class="title">服务订单</view><text>仅展示已付款订单及履约状态，不在此处展示查询结果</text></view>
+    <view class="page-head"><view class="title">服务订单</view><text>点击订单可查看详情或等待中的查询进度</text></view>
     <view class="list" v-if="orders.length">
-      <view class="order card" v-for="item in orders" :key="item.order_no">
+      <view class="order card" v-for="item in orders" :key="item.order_no" @click="goDetail(item)">
         <view class="order-top"><text class="service-name">{{ item.service_name }}</text><text class="status" :class="item.status">{{ statusText(item.status) }}</text></view>
         <view class="order-row"><text>订单编号</text><text selectable>{{ item.order_no }}</text></view>
         <view class="order-row"><text>付款时间</text><text>{{ item.paid_at || '-' }}</text></view>
@@ -32,6 +32,7 @@ async function load(){try{const data=await request('/orders');orders.value=data.
 function statusText(value){return STATUS_TEXT[value]||'处理中'}
 function refundText(value){return ({requesting:'退款申请提交中',processing:'退款处理中',refunded:'退款已完成',failed:'退款暂未成功，系统将自动重试'})[value]||'系统将自动退款'}
 function contactService(){uni.switchTab({url:'/pages/my/my'})}
+function goDetail(item){uni.navigateTo({url:`/pages/result/result?order_no=${item.order_no}`})}
 function showAppleRefund(){
   uni.showModal({
     title:'iOS 订单退款',
