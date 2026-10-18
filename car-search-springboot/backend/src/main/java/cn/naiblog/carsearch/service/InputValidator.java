@@ -27,9 +27,19 @@ public final class InputValidator {
             if (Boolean.TRUE.equals(field.get("required")) && value.isBlank()) throw new BusinessException(label + "不能为空");
             if (value.isBlank()) continue;
             if (List.of("plate","plate_prefix","plate_or_vin","vin").contains(type)) value = Normalizer.normalize(value, Normalizer.Form.NFKC).replaceAll("[\\s\\p{Zs}]+", "").toUpperCase();
+            // select 类型：验证值在 options 列表内
+            if ("select".equals(type)) {
+                Object optionsObj = field.get("options");
+                if (optionsObj instanceof List<?> options) {
+                    String val = value;
+                    boolean found = options.stream()
+                        .anyMatch(opt -> opt instanceof Map<?,?> m && String.valueOf(m.get("value")).equals(val));
+                    if (!found) throw new BusinessException(label + "选项无效");
+                }
+            }
             int length = value.codePointCount(0, value.length());
             boolean valid = PATTERNS.containsKey(type) ? PATTERNS.get(type).matcher(value).matches()
-                    : "name".equals(type) ? length >= 2 && length <= 30 : length <= 100;
+                    : "name".equals(type) ? length >= 2 && length <= 30 : List.of("select","text").contains(type) || length <= 100;
             if (!valid) throw new BusinessException(label + "格式不正确");
             clean.put(key, value);
         }

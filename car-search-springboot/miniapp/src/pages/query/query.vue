@@ -64,6 +64,17 @@
           </view>
         </view>
 
+        <!-- 下拉选择：车辆类型等 -->
+        <picker v-else-if="field.type === 'select' && field.options"
+          :range="field.options" range-key="label"
+          :value="getSelectIndex(field)"
+          @change="e => onSelectChange(field, e.detail.value)">
+          <view class="select-display">
+            <text :class="{ placeholder: !form[field.key] }">{{ getSelectLabel(field) || `请选择${field.label}` }}</text>
+            <text class="select-arrow">▾</text>
+          </view>
+        </picker>
+
         <!-- 其他字段：原生输入框 -->
         <input v-else
           v-model="form[field.key]"
@@ -173,7 +184,8 @@ function normalize(key) { form.value[key] = String(form.value[key] || '').trim()
 function openAgreement() { uni.navigateTo({ url:'/pages/agreement/agreement' }) }
 function initializeForm() {
   service.value.input_schema.forEach(field => {
-    form.value[field.key] = ''
+    // select 类型使用 default 值
+    form.value[field.key] = field.default || ''
     // 初始化 plate_or_vin 类型的输入模式
     if (field.type === 'plate_or_vin') {
       inputMode[field.key] = 'plate'
@@ -185,6 +197,20 @@ function initializeForm() {
 function getInputType(type) {
   if (type === 'idcard') return 'idcard'
   return 'text'
+}
+
+// select 类型辅助函数
+function getSelectIndex(field) {
+  const idx = (field.options || []).findIndex(opt => opt.value === form.value[field.key])
+  return idx >= 0 ? idx : 0
+}
+function getSelectLabel(field) {
+  const opt = (field.options || []).find(opt => opt.value === form.value[field.key])
+  return opt ? opt.label : ''
+}
+function onSelectChange(field, index) {
+  const opt = field.options[index]
+  if (opt) form.value[field.key] = opt.value
 }
 
 // 切换 plate_or_vin 的输入模式
@@ -662,5 +688,20 @@ function clearFlow() { uni.removeStorageSync(FLOW_KEY) }
     color: #8d98a9;
     margin-top: 10rpx;
   }
+}
+
+/* 下拉选择样式 */
+.select-display {
+  height: 86rpx;
+  border-radius: 14rpx;
+  background: #f6f8fb;
+  padding: 0 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 28rpx;
+
+  .placeholder { color: #aab3c0; }
+  .select-arrow { color: #8d98a9; font-size: 24rpx; }
 }
 </style>

@@ -109,6 +109,47 @@ public final class ResultValueFormatter {
             }
         }
 
+        // plate_color 车牌颜色
+        if ("plate_color".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) {
+                return switch (code) {
+                    case 0 -> "蓝色";
+                    case 1 -> "黄色";
+                    case 2 -> "黑色";
+                    case 3 -> "白色";
+                    case 4 -> "渐变绿色";
+                    case 5 -> "黄绿双拼色";
+                    case 6 -> "蓝白渐变色";
+                    case 7 -> "临时牌照";
+                    case 11 -> "绿色";
+                    case 12 -> "红色";
+                    default -> "未知(" + code + ")";
+                };
+            }
+        }
+
+        // vehicle_type 车辆类型
+        if ("vehicle_type".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) {
+                return switch (code) {
+                    case 1 -> "一类客车";
+                    case 2 -> "二类客车";
+                    case 3 -> "三类客车";
+                    case 4 -> "四类客车";
+                    case 11 -> "一类货车";
+                    case 12 -> "二类货车";
+                    case 13 -> "三类货车";
+                    default -> "未知(" + code + ")";
+                };
+            }
+        }
+
         // Map/List 嵌套结构：递归格式化内部字段
         if (value instanceof Map<?, ?> m) {
             Map<String, Object> result = new LinkedHashMap<>();
