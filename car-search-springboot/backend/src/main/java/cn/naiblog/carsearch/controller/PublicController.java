@@ -5,6 +5,7 @@ import cn.naiblog.carsearch.config.CarProperties;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -35,7 +36,7 @@ public class PublicController {
             item.put("input_schema",mapper.readValue(String.valueOf(row.get("input_schema")),new TypeReference<List<Map<String,Object>>>(){}));
             item.put("result_schema",mapper.readValue(String.valueOf(row.get("result_schema")),new TypeReference<Map<String,Object>>(){})); item.put("status",((Number)row.get("status")).intValue()); services.add(item); }
         List<Map<String,Object>> announcements=jdbc.queryForList("select id,title,content,suppress_hours,updated_at from ci_announcement where status=1 and (start_at is null or start_at<=?) and (end_at is null or end_at>=?) order by id desc limit 1",LocalDateTime.now(),LocalDateTime.now());
-        Map<String,String> storedSettings=new HashMap<>();jdbc.query("select `key`,value from ci_setting",rs->{while(rs.next())storedSettings.put(rs.getString(1),rs.getString(2));});
+        Map<String,String> storedSettings=new HashMap<>();jdbc.query("select `key`,value from ci_setting",(ResultSetExtractor<Object>)rs->{while(rs.next())storedSettings.put(rs.getString(1),rs.getString(2));return null;});
         Map<String,Object> publicSettings=new LinkedHashMap<>(); for(String key:List.of("operator_name","privacy_contact","privacy_effective_date","customer_service_phone","customer_service_hours","disclaimer","privacy_retention_days")) publicSettings.put(key,storedSettings.getOrDefault(key,""));
         String catalog=HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(version.toString().getBytes(StandardCharsets.UTF_8)));
         Map<String,Object> result=new LinkedHashMap<>(); result.put("app_version","20260921-catalog-v2"); result.put("protocol_version",properties.clientProtocol()); result.put("catalog_version",catalog); result.put("categories",categories); result.put("services",services); result.put("announcement",announcements.isEmpty()?null:announcements.getFirst()); result.put("settings",publicSettings); return ApiResponse.ok(result);
