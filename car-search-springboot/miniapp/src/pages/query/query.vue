@@ -266,6 +266,7 @@ async function chooseImage(fieldKey) {
     // 上传图片
     uploading[fieldKey] = true
     uploadProgress[fieldKey] = 0
+    const token = await ensureLogin()
 
     const uploadResult = await new Promise((resolve, reject) => {
       const uploadTask = uni.uploadFile({
@@ -276,7 +277,7 @@ async function chooseImage(fieldKey) {
           type: 'license'
         },
         header: {
-          Authorization: `Bearer ${await ensureLogin()}`
+          Authorization: `Bearer ${token}`
         },
         success: (res) => {
           if (res.statusCode === 200) {
