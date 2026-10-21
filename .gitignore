@@ -13,6 +13,10 @@ __pycache__/
 mysql_data_*/
 *.sql.bak
 
+# 业务敏感文档（接口授权凭证 / 第三方接口数据，不入库）
+接口授权-*.xlsx
+汽修宝接口爬虫.md
+
 # 系统文件
 Thumbs.db
 Desktop.ini
