@@ -201,8 +201,9 @@ function openServiceEditor(service) {
         </div>
         <div class="form-grid three">
           <label>下单返回ID路径<input name="id_field_path" value="${escapeHtml(item.id_field_path||'')}" placeholder="如 result.query_id 或 task_id"><small class="field-note">供应商下单接口返回的ID字段路径，留空则自动尝试常见字段名</small></label>
+          <label>报告接口ID参数名<input name="fetch_api_param_name" value="${escapeHtml(item.fetch_api_param_name||'')}" placeholder="query_id（默认）或 order_id"><small class="field-note">降级轮询报告接口时传递ID的参数名，默认 query_id</small></label>
         </div>
-        <div class="hint">回调模式：下单时传入回调地址，供应商处理完成后主动推送结果。超时未收到回调则自动降级轮询供应商。比纯轮询更省接口调用次数。<br>「下单返回ID路径」用于从下单响应中提取唯一标识（如 query_id），支持点号路径（如 result.order_id）。留空则自动尝试 query_id、code_id、order_id、task_id 等常见字段。</div>
+        <div class="hint">回调模式：下单时传入回调地址，供应商处理完成后主动推送结果。超时未收到回调则自动降级轮询供应商。比纯轮询更省接口调用次数。<br>「下单返回ID路径」用于从下单响应中提取唯一标识（如 query_id），支持点号路径（如 result.order_id）。留空则自动尝试 query_id、code_id、order_id、task_id 等常见字段。<br>「报告接口ID参数名」用于降级轮询时传递查询ID的参数名，部分供应商使用 order_id 而非 query_id。</div>
       </div>
       </div>
 
@@ -267,6 +268,7 @@ function openServiceEditor(service) {
       fields.callback_secret=(fields.callback_secret||'').trim()
       fields.callback_timeout_sec=Number(fields.callback_timeout_sec||120)
       fields.id_field_path=(fields.id_field_path||'').trim()
+      fields.fetch_api_param_name=(fields.fetch_api_param_name||'').trim()
       fields.poll_interval_sec=Number(fields.poll_interval_sec||5)
       fields.poll_timeout_sec=Number(fields.poll_timeout_sec||120)
       fields.input_schema=[...$('#input-fields').querySelectorAll('.schema-row')].map(row=>{

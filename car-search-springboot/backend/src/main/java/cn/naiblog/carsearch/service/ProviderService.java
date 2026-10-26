@@ -260,6 +260,9 @@ public class ProviderService {
         String serviceVersion=String.valueOf(service.getOrDefault("api_version","")).trim();
         String fetchVersion=String.valueOf(service.getOrDefault("fetch_api_version","")).trim();
         if(fetchVersion.isBlank())fetchVersion=serviceVersion; // 回退到 api_version
+        // 报告接口的查询ID参数名可配置，默认 query_id，部分供应商使用 order_id
+        String paramName=String.valueOf(service.getOrDefault("fetch_api_param_name","query_id")).trim();
+        if(paramName.isBlank())paramName="query_id";
         int pollInterval=service.get("poll_interval_sec")instanceof Number n?Math.max(2,n.intValue()):5;
         int pollTimeout=service.get("poll_timeout_sec")instanceof Number n?Math.max(10,n.intValue()):120;
         long deadline=System.currentTimeMillis()+pollTimeout*1000L;
@@ -267,7 +270,7 @@ public class ProviderService {
         int pollCount=0;
         while(System.currentTimeMillis()<deadline){
             pollCount++;
-            Map<String,String>fetchParams=buildSignedParams(provider,Map.of("query_id",queryId),fetchVersion);
+            Map<String,String>fetchParams=buildSignedParams(provider,Map.of(paramName,queryId),fetchVersion);
             log.info("[Fallback] 轮询 pollCount={}, url={}, params={}, version={}", pollCount, fetchUri, fetchParams, fetchVersion);
 
             HttpRequest.Builder fetchBuilder=HttpRequest.newBuilder().uri(fetchUri).timeout(Duration.ofSeconds(20))
@@ -292,17 +295,24 @@ public class ProviderService {
             Object fetchResult=fetchPayload.get("result");
             if(fetchResult instanceof Map){
                 @SuppressWarnings("unchecked")Map<String,Object> fr=(Map<String,Object>)fetchResult;
+                String statusField="";
                 String statusValue="";
-                for(String key:new String[]{"query_status","result_status"}){
+                for(String key:new String[]{"query_status","result_status","order_status"}){
                     String val=String.valueOf(fr.getOrDefault(key,"")).trim();
-                    if(!val.isBlank()){statusValue=val;break;}
+                    if(!val.isBlank()){statusField=key;statusValue=val;break;}
                 }
 
-                boolean isSuccess="3".equals(statusValue)||"1".equals(statusValue);
+                boolean isSuccess;
                 boolean isFailed;
-                if("result_status".equals(getStatusField(fr))){
+                if("order_status".equals(statusField)){
+                    // order_status: 0=查询中, 1=查询成功, 2=查询失败
+                    isSuccess="1".equals(statusValue);
+                    isFailed="2".equals(statusValue);
+                }else if("result_status".equals(statusField)){
+                    isSuccess="1".equals(statusValue);
                     isFailed="3".equals(statusValue);
                 }else{
+                    isSuccess="3".equals(statusValue);
                     isFailed="7".equals(statusValue);
                 }
 
@@ -437,22 +447,28 @@ public class ProviderService {
             Object fetchResult=fetchPayload.get("result");
             if(fetchResult instanceof Map){
                 @SuppressWarnings("unchecked")Map<String,Object> fr=(Map<String,Object>)fetchResult;
-                // 获取状态值（兼容 query_status 和 result_status）
+                // 获取状态字段和值（兼容 query_status、result_status、order_status）
+                String statusField="";
                 String statusValue="";
-                for(String key:new String[]{"query_status","result_status"}){
+                for(String key:new String[]{"query_status","result_status","order_status"}){
                     String val=String.valueOf(fr.getOrDefault(key,"")).trim();
-                    if(!val.isBlank()){statusValue=val;break;}
+                    if(!val.isBlank()){statusField=key;statusValue=val;break;}
                 }
 
-                // 判断是否成功（兼容不同值：3=query_status成功, 1=result_status成功）
-                boolean isSuccess="3".equals(statusValue)||"1".equals(statusValue);
-                // 判断是否失败（兼容不同值：7=query_status失败, 3=result_status失败（当用result_status时））
-                // 注意：当使用 result_status 时，1=成功, 2=处理中, 3=失败
-                // 当使用 query_status 时，3=成功, 7=失败
+                // 判断是否成功
+                boolean isSuccess;
                 boolean isFailed;
-                if("result_status".equals(getStatusField(fr))){
+                if("order_status".equals(statusField)){
+                    // order_status: 0=查询中, 1=查询成功, 2=查询失败
+                    isSuccess="1".equals(statusValue);
+                    isFailed="2".equals(statusValue);
+                }else if("result_status".equals(statusField)){
+                    // result_status: 1=成功, 2=处理中, 3=失败
+                    isSuccess="1".equals(statusValue);
                     isFailed="3".equals(statusValue);
                 }else{
+                    // query_status: 3=成功, 7=失败
+                    isSuccess="3".equals(statusValue);
                     isFailed="7".equals(statusValue);
                 }
 
@@ -543,6 +559,7 @@ public class ProviderService {
     private String getStatusField(Map<String,Object> result){
         if(result.containsKey("query_status"))return "query_status";
         if(result.containsKey("result_status"))return "result_status";
+        if(result.containsKey("order_status"))return "order_status";
         return "query_status"; // 默认
     }
 

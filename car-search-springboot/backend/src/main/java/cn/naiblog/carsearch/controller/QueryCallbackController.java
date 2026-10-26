@@ -107,6 +107,24 @@ public class QueryCallbackController {
                 }
             }
         }
+
+        // 4b. 兜底匹配：回调 body 中无任何 ID 字段时，尝试用该服务下唯一的 querying 订单匹配
+        if ((queryId == null || queryId.isBlank()) && body != null) {
+            List<Map<String, Object>> pending = jdbc.queryForList(
+                    "select o.id, o.order_no, o.provider_request_id, o.created_at from ci_order o " +
+                            "where o.service_id=? and o.status='querying' " +
+                            "order by o.created_at desc limit 5", serviceId);
+            if (pending.size() == 1) {
+                Map<String, Object> row = pending.getFirst();
+                String candidate = String.valueOf(row.get("provider_request_id"));
+                if (candidate != null && !candidate.isBlank() && !"null".equals(candidate)) {
+                    queryId = candidate;
+                    log.info("[Callback] 兜底匹配成功 serviceId={}, queryId={}, orderNo={}", serviceId, queryId, row.get("order_no"));
+                }
+            } else if (pending.size() > 1) {
+                log.warn("[Callback] 兜底匹配跳过：serviceId={} 有 {} 个待查订单，无法唯一匹配", serviceId, pending.size());
+            }
+        }
         log.info("[Callback] 提取 queryId={}", queryId);
 
         // 5. 更新查询记录
@@ -130,6 +148,18 @@ public class QueryCallbackController {
                     // query_status: 3=查询成功, 7=查询失败
                     if ("7".equals(queryStatus)) {
                         status = "failed";
+                    }
+                    // order_status: 0=查询中, 1=查询成功, 2=查询失败（部分供应商使用此字段）
+                    if (queryStatus.isBlank()) {
+                        Object orderStatus = result.get("order_status");
+                        if (orderStatus != null) {
+                            String os = String.valueOf(orderStatus).trim();
+                            if ("0".equals(os)) {
+                                log.info("[Callback] 供应商仍在查询中 order_status=0，等待最终回调 queryId={}", queryId);
+                                return Map.of("code", 0, "message", "success");
+                            }
+                            if ("2".equals(os)) status = "failed";
+                        }
                     }
                     // 也检查内层 result.status: 1=查询中, 2=查询成功, 3=查询失败
                     if (result.get("result") instanceof Map) {
@@ -163,6 +193,14 @@ public class QueryCallbackController {
             // 6. 更新订单状态（通过 provider_request_id 关联）
             if ("completed".equals(status) && body != null) {
                 updateOrderFromCallback(serviceId, queryId, body, resultCode);
+            } else if ("failed".equals(status)) {
+                // 回调返回失败，更新订单为 query_failed
+                int failedOrders = jdbc.update(
+                        "update ci_order set status='query_failed', updated_at=? where provider_request_id=? and status='querying'",
+                        LocalDateTime.now(), queryId);
+                if (failedOrders > 0) {
+                    log.info("[Callback] 回调返回失败，已更新 {} 个订单为 query_failed queryId={}", failedOrders, queryId);
+                }
             }
         } else {
             log.warn("[Callback] 无法提取 queryId，body={}", body);
