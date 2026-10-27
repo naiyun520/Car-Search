@@ -118,20 +118,20 @@ defineExpose({ addChar, deleteChar, cellCount })
 
   .tab {
     flex: 1;
-    height: 68rpx;
+    height: 72rpx;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 12rpx;
+    border-radius: 24rpx;
     font-size: 24rpx;
     font-weight: 500;
-    background: #f0f3f7;
-    color: #6b7688;
+    background: #F0F2F5;
+    color: #6B7280;
     transition: all 0.2s;
 
     &.active {
-      background: #e8f1ff;
-      color: #175cd3;
+      background: #E0EEFF;
+      color: #2E7DFF;
       font-weight: 600;
     }
   }
@@ -148,18 +148,18 @@ defineExpose({ addChar, deleteChar, cellCount })
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 12rpx;
-    border: 2rpx solid #dde2ea;
+    border-radius: 16rpx;
+    border: 2rpx solid #E5E7EB;
     background: #fff;
     font-size: 36rpx;
     font-weight: 700;
-    color: #223049;
+    color: #1F2937;
     transition: all 0.2s;
     position: relative;
 
     &.active {
-      border-color: #175cd3;
-      box-shadow: 0 0 0 4rpx rgba(23, 92, 211, 0.15);
+      border-color: #2E7DFF;
+      box-shadow: 0 0 0 4rpx rgba(46, 125, 255, 0.15);
     }
 
     &.is-dot::after {
@@ -169,7 +169,7 @@ defineExpose({ addChar, deleteChar, cellCount })
       top: 50%;
       transform: translateY(-50%);
       font-size: 32rpx;
-      color: #8b96a7;
+      color: #9CA3AF;
     }
   }
 }
@@ -179,12 +179,12 @@ defineExpose({ addChar, deleteChar, cellCount })
   right: 0;
   top: 100rpx;
   padding: 16rpx 32rpx;
-  background: #175cd3;
+  background: #2E7DFF;
   color: #fff;
-  border-radius: 12rpx;
+  border-radius: 24rpx;
   font-size: 26rpx;
   font-weight: 500;
-  box-shadow: 0 4rpx 12rpx rgba(23, 92, 211, 0.3);
+  box-shadow: 0 8rpx 20rpx rgba(46, 125, 255, 0.28);
   z-index: 10;
 }
 </style>

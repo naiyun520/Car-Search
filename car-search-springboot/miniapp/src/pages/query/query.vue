@@ -7,6 +7,12 @@
       <view class="query-title">{{ service.name }}</view>
       <view class="query-desc">{{ service.category_name || '车辆信息服务' }}</view>
     </view>
+
+    <view class="form-banner">
+      <view class="banner-dot">i</view>
+      <text>支持车牌号、车架号等多种查询方式</text>
+    </view>
+
     <view class="form-card card">
       <view class="field" v-for="field in service.input_schema" :key="field.key">
         <view class="label">{{ field.label }} <text v-if="field.required">*</text></view>
@@ -21,7 +27,7 @@
         <view v-else-if="field.type === 'plate_or_vin'" class="mixed-input-wrap">
           <view class="mixed-tabs">
             <view class="tab" :class="{ active: inputMode[field.key] === 'plate' }" @tap="switchInputMode(field.key, 'plate')">车牌号</view>
-            <view class="tab" :class="{ active: inputMode[field.key] === 'vin' }" @tap="switchInputMode(field.key, 'vin')">VIN车架号</view>
+            <view class="tab" :class="{ active: inputMode[field.key] === 'vin' }" @tap="switchInputMode(field.key, 'vin')">车架号</view>
           </view>
           <!-- 车牌模式 -->
           <PlateInput v-if="inputMode[field.key] === 'plate'"
@@ -93,9 +99,9 @@
     <view class="service-notice card"><view class="notice-icon">i</view><view><view class="notice-title">服务说明</view><view class="notice-text">{{ service.description || '请按页面要求提交真实、合法且已取得授权的查询信息。' }}</view></view></view>
     <view class="tips card">
       <view class="tips-title">查询须知</view>
-      <view>· 系统查询结果仅供参考，不构成任何法律效力</view>
-      <view>· 支付成功后系统自动查询，请停留在当前页面等待结果</view>
-      <view>· 未查询到信息时，系统会根据实际情况做出退款指引</view>
+      <view>1. 仅支持合法合规的查询请求</view>
+      <view>2. 查询结果仅供参考，不作为法律依据</view>
+      <view>3. 未查询到信息时系统会按实际情况指引退款</view>
     </view>
     <view class="maintenance card" v-if="service.status===0">此功能维护中，请稍后再试</view>
     <view class="bottom-safe" />
@@ -154,7 +160,7 @@ const uploading = reactive({})
 const uploadProgress = reactive({})
 
 const serviceIconUrl = computed(() => {
-  return serviceIcon(service.value?.icon,API_BASE_URL)
+  return serviceIcon(service.value?.icon,API_BASE_URL,service.value?.code)
 })
 onLoad(async options => {
   try {
@@ -271,6 +277,7 @@ function onKeyDelete() {
 // 图片选择和上传
 async function chooseImage(fieldKey) {
   try {
+    console.log(`[Upload] chooseImage 开始 field=${fieldKey}`)
     const res = await new Promise((resolve, reject) => {
       uni.chooseImage({
         count: 1,
@@ -283,9 +290,12 @@ async function chooseImage(fieldKey) {
 
     const filePath = res.tempFilePaths[0]
     const fileInfo = res.tempFiles[0]
+    const fileSizeMB = (fileInfo.size / 1024 / 1024).toFixed(2)
+    console.log(`[Upload] 选中文件 field=${fieldKey}, path=${filePath}, size=${fileSizeMB}MB, type=${fileInfo.type || 'unknown'}`)
 
     // 验证文件大小
     if (fileInfo.size > 5 * 1024 * 1024) {
+      console.warn(`[Upload] 文件过大 field=${fieldKey}, size=${fileSizeMB}MB > 5MB`)
       return uni.showToast({ title: '图片大小不能超过 5MB', icon: 'none' })
     }
 
@@ -293,17 +303,22 @@ async function chooseImage(fieldKey) {
     uploading[fieldKey] = true
     uploadProgress[fieldKey] = 0
 
+    console.log(`[Upload] 开始上传 field=${fieldKey}, path=${filePath}`)
     const uploadResult = await doUploadWithRetry(filePath, fieldKey)
+    console.log(`[Upload] 上传成功 field=${fieldKey}, result=`, uploadResult)
+
     // 上传成功，保存 URL（如果是相对路径则拼接域名）
     let imageUrl = uploadResult.url
     if (imageUrl && imageUrl.startsWith('/')) {
       const domainMatch = API_BASE_URL.match(/^(https?:\/\/[^/]+)/)
       if (domainMatch) imageUrl = domainMatch[1] + imageUrl
     }
+    console.log(`[Upload] 最终URL field=${fieldKey}, url=${imageUrl}`)
     form.value[fieldKey] = imageUrl
     uni.showToast({ title: '上传成功', icon: 'success' })
 
   } catch (error) {
+    console.error(`[Upload] 上传失败 field=${fieldKey}, error=`, error)
     if (error.message !== 'chooseImage:fail cancel') {
       uni.showToast({ title: error.message || '上传失败', icon: 'none' })
     }
@@ -320,6 +335,8 @@ function clearImage(fieldKey) {
 // 上传图片（带401自动重试）
 async function doUploadWithRetry(filePath, fieldKey, retried = false) {
   const token = await ensureLogin()
+  const uploadUrl = `${API_BASE_URL}/upload/image?access_token=${encodeURIComponent(token.substring(0, 12))}...`
+  console.log(`[Upload] doUploadWithRetry field=${fieldKey}, retried=${retried}, url=${uploadUrl}, hasToken=${!!token}`)
   return new Promise((resolve, reject) => {
     const uploadTask = uni.uploadFile({
       // token 通过 query 参数传递，兼容 uni.uploadFile 不发送 header 的情况
@@ -329,23 +346,34 @@ async function doUploadWithRetry(filePath, fieldKey, retried = false) {
       formData: { type: 'license' },
       header: { Authorization: `Bearer ${token}` },
       success: (res) => {
+        console.log(`[Upload] 响应 field=${fieldKey}, statusCode=${res.statusCode}, retried=${retried}`)
         if (res.statusCode === 200) {
           try {
             const data = JSON.parse(res.data)
+            console.log(`[Upload] 响应体 field=${fieldKey}, code=${data.code}, message=${data.message}`)
             if (data.code === 0) return resolve(data.data)
+            console.error(`[Upload] 业务错误 field=${fieldKey}, code=${data.code}, message=${data.message}`)
             reject(new Error(data.message || '上传失败'))
-          } catch (e) { reject(new Error('解析响应失败')) }
+          } catch (e) {
+            console.error(`[Upload] JSON解析失败 field=${fieldKey}, raw=`, res.data)
+            reject(new Error('解析响应失败'))
+          }
         } else if (res.statusCode === 401 && !retried) {
+          console.warn(`[Upload] 401，清除登录态并重试 field=${fieldKey}`)
           clearLogin()
-          // 重试一次（会重新获取 token）
           doUploadWithRetry(filePath, fieldKey, true).then(resolve).catch(reject)
         } else if (res.statusCode === 401) {
+          console.error(`[Upload] 401 重试后仍失败 field=${fieldKey}`)
           reject(new Error('登录已过期，请重新登录'))
         } else {
+          console.error(`[Upload] 非200状态码 field=${fieldKey}, statusCode=${res.statusCode}, body=`, res.data)
           reject(new Error('上传失败，状态码：' + res.statusCode))
         }
       },
-      fail: (err) => { reject(new Error(err.errMsg || '网络错误')) }
+      fail: (err) => {
+        console.error(`[Upload] uploadFile fail field=${fieldKey}, err=`, err)
+        reject(new Error(err.errMsg || '网络错误'))
+      }
     })
     uploadTask.onProgressUpdate((res) => { uploadProgress[fieldKey] = res.progress })
   })
@@ -458,6 +486,7 @@ async function fulfil(orderNo, current=null) {
   if (order.status === 'success') return finish(orderNo)
   if (order.status === 'payment_review') throw finalError(order.message)
   if (order.status === 'query_failed') return finish(orderNo)
+  if (order.status === 'querying') return showAsyncPending(orderNo)
   return poll(orderNo)
 }
 
@@ -470,28 +499,24 @@ async function poll(orderNo) {
     if (order.status === 'paid') return fulfil(orderNo, order)
     if (order.status === 'query_failed') return finish(orderNo)
     if (['payment_review','cancelled','refunded'].includes(order.status)) throw finalError(order.message || statusMessage(order))
-    // 回调模式：querying 状态 → 提示用户去订单列表查看
+    // 回调模式：querying 状态 → 跳转订单列表并提示等待
     if (order.status === 'querying') return showAsyncPending(orderNo)
   }
-  // 超时后如果仍在 querying，也提示用户
+  // 超时后如果仍在 querying，也跳转订单列表
   return showAsyncPending(orderNo)
 }
 
+/** 二级查询（异步/回调）：不在结果页停留，跳转订单列表并弹窗告知预计等待时间 */
 function showAsyncPending(orderNo) {
   clearFlow()
-  uni.showModal({
-    title: '订单已提交',
-    content: '查询结果需要一定时间处理，请耐心等待。您可以在「我的 → 订单」中随时查看查询进度和结果。',
-    confirmText: '查看订单',
-    cancelText: '返回首页',
-    showCancel: true,
-    success: res => {
-      if (res.confirm) {
-        uni.navigateTo({ url: '/pages/orders/orders' })
-      } else {
-        uni.switchTab({ url: '/pages/index/index' })
-      }
-    }
+  uni.redirectTo({
+    url:'/pages/orders/orders',
+    complete:()=>uni.showModal({
+      title:'查询已提交',
+      content:'该查询通常需要几分钟返回结果，期间可正常使用或退出小程序。结果生成后，可在订单列表点击查看进度与结果。',
+      showCancel:false,
+      confirmText:'我知道了'
+    })
   })
 }
 
@@ -551,32 +576,70 @@ function clearFlow() { uni.removeStorageSync(FLOW_KEY) }
 </script>
 
 <style lang="scss" scoped>
-.query-page{padding-bottom:170rpx;background:#f4f7fb}.query-head{text-align:center;padding:44rpx 35rpx 40rpx;background:linear-gradient(180deg,#eaf3ff,#f7fafd);border-bottom:1rpx solid #e3e9f2}.service-icon{width:100rpx;height:100rpx;border-radius:24rpx;background:#e8f1ff;padding:18rpx;display:flex;align-items:center;justify-content:center;margin:auto;border:1rpx solid #d6e4f6}.service-icon image{width:100%;height:100%}.query-title{font-size:38rpx;font-weight:800;margin-top:20rpx;color:#18243a}.query-desc{font-size:24rpx;color:#718097;margin-top:10rpx}.form-card{margin:24rpx;padding:6rpx 30rpx}.field{padding:30rpx 0;border-bottom:1rpx solid #edf0f5}.field:last-of-type{border-bottom:0}.label{font-size:27rpx;font-weight:650;margin-bottom:18rpx;color:#18243a}.label text{color:#e3483e}.field input{height:88rpx;border-radius:14rpx;background:#f6f8fb;padding:0 22rpx;font-size:28rpx}.field-tip{font-size:21rpx;color:#8d98a9;margin-top:12rpx}.authorization{display:flex;gap:14rpx;padding:28rpx 0;color:#68758a;font-size:23rpx;line-height:1.65}.authorization text{color:#175cd3}.check{width:34rpx;height:34rpx;flex:none;margin-top:2rpx;border:2rpx solid #b7c2d1;border-radius:7rpx;display:flex;align-items:center;justify-content:center}.checked{color:#fff;background:#175cd3;border-color:#175cd3}.service-notice{margin:24rpx;padding:27rpx;display:flex;gap:18rpx;border:1rpx solid #bdd9ff;background:linear-gradient(135deg,#edf6ff,#fff)}.notice-icon{width:46rpx;height:46rpx;border-radius:50%;background:#176bdf;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;flex:none}.notice-title{font-size:27rpx;font-weight:750;color:#135abd}.notice-text{font-size:23rpx;color:#4f6380;line-height:1.7;margin-top:8rpx}.tips{margin:24rpx;padding:28rpx;color:#758297;font-size:23rpx;line-height:1.9}.tips-title{font-size:27rpx;color:#344158;font-weight:700;margin-bottom:8rpx}.maintenance{margin:24rpx;padding:24rpx;text-align:center;background:#fff7e8;color:#9d6200;font-size:25rpx;font-weight:600;border:1rpx solid #f2e3bd}.pay-bar{position:fixed;z-index:30;bottom:0;left:0;right:0;min-height:130rpx;padding:18rpx 24rpx calc(18rpx + env(safe-area-inset-bottom));background:#fff;box-shadow:0 -8rpx 25rpx rgba(29,49,80,.1);display:flex;align-items:center}.pay-btn{width:100%;height:88rpx;line-height:88rpx;margin:0;border-radius:16rpx;background:linear-gradient(135deg,#175cd3,#2f80e3);color:#fff;font-size:29rpx;font-weight:700}.pay-btn.disabled{background:#aab3c0}
+.query-page{padding-bottom:180rpx;background:#F5F7FA}
+.query-head{text-align:center;padding:48rpx 36rpx 42rpx;background:linear-gradient(180deg,#E0EEFF,#F5F7FA)}
+.service-icon{width:108rpx;height:108rpx;border-radius:28rpx;overflow:hidden;display:flex;align-items:center;justify-content:center;margin:auto}
+.service-icon image{width:100%;height:100%}
+.query-title{font-size:38rpx;font-weight:700;margin-top:22rpx;color:#1F2937}
+.query-desc{font-size:24rpx;color:#9CA3AF;margin-top:10rpx}
+
+.form-banner{margin:26rpx 28rpx 0;padding:22rpx 26rpx;display:flex;align-items:center;gap:14rpx;background:#E0EEFF;border-radius:20rpx;color:#2E7DFF;font-size:23rpx}
+.banner-dot{width:36rpx;height:36rpx;flex:none;border-radius:50%;background:#2E7DFF;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22rpx;font-weight:700}
+
+.form-card{margin:26rpx 28rpx;padding:6rpx 30rpx;border-radius:24rpx}
+.field{padding:32rpx 0;border-bottom:1rpx solid #F0F2F5}
+.field:last-of-type{border-bottom:0}
+.label{font-size:28rpx;font-weight:600;margin-bottom:20rpx;color:#1F2937}
+.label text,.label .req{color:#EF4444}
+.field input{height:92rpx;border-radius:20rpx;background:#F5F7FA;padding:0 26rpx;font-size:28rpx;color:#1F2937}
+.field input::placeholder{color:#9CA3AF}
+.field-tip{font-size:21rpx;color:#9CA3AF;margin-top:12rpx}
+
+.authorization{display:flex;gap:14rpx;padding:30rpx 0;color:#6B7280;font-size:23rpx;line-height:1.65}
+.authorization text{color:#2E7DFF}
+.check{width:34rpx;height:34rpx;flex:none;margin-top:2rpx;border:2rpx solid #CBD5E1;border-radius:8rpx;display:flex;align-items:center;justify-content:center}
+.checked{color:#fff;background:#2E7DFF;border-color:#2E7DFF}
+
+.service-notice{margin:26rpx 28rpx;padding:28rpx;display:flex;gap:18rpx;background:#F0F6FF;border:1rpx solid #D6E6FF;border-radius:24rpx}
+.notice-icon{width:48rpx;height:48rpx;border-radius:50%;background:#2E7DFF;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex:none}
+.notice-title{font-size:27rpx;font-weight:700;color:#2E7DFF}
+.notice-text{font-size:23rpx;color:#6B7280;line-height:1.7;margin-top:8rpx}
+
+.tips{margin:26rpx 28rpx;padding:30rpx;border-radius:24rpx}
+.tips-title{font-size:28rpx;color:#1F2937;font-weight:700;margin-bottom:14rpx}
+.tips view{color:#6B7280;font-size:23rpx;line-height:1.95}
+
+.maintenance{margin:26rpx 28rpx;padding:24rpx;text-align:center;background:#FDEFD8;color:#F59E0B;font-size:25rpx;font-weight:600;border-radius:20rpx}
+
+.pay-bar{position:fixed;z-index:30;bottom:0;left:0;right:0;min-height:132rpx;padding:18rpx 28rpx calc(18rpx + env(safe-area-inset-bottom));background:#fff;box-shadow:0 -8rpx 25rpx rgba(31,41,55,.08);display:flex;align-items:center}
+.pay-btn{width:100%;height:92rpx;line-height:92rpx;margin:0;border-radius:24rpx;background:#2E7DFF;color:#fff;font-size:30rpx;font-weight:600;box-shadow:0 10rpx 24rpx rgba(46,125,255,.28)}
+.pay-btn.disabled{background:#C4CBD5;box-shadow:none}
 
 /* 混合输入（车牌/VIN）样式 */
 .mixed-input-wrap {
   .mixed-tabs {
     display: flex;
     gap: 16rpx;
-    margin-bottom: 20rpx;
+    margin-bottom: 22rpx;
 
     .tab {
       flex: 1;
-      height: 64rpx;
+      height: 72rpx;
       display: flex;
       align-items: center;
       justify-content: center;
-      border-radius: 12rpx;
-      font-size: 24rpx;
+      border-radius: 36rpx;
+      font-size: 26rpx;
       font-weight: 500;
-      background: #f0f3f7;
-      color: #6b7688;
+      background: #F5F7FA;
+      color: #6B7280;
       transition: all 0.2s;
 
       &.active {
-        background: #e8f1ff;
-        color: #175cd3;
+        background: #2E7DFF;
+        color: #ffffff;
         font-weight: 600;
+        box-shadow: 0 8rpx 18rpx rgba(46,125,255,.28);
       }
     }
   }
@@ -593,40 +656,40 @@ function clearFlow() { uni.removeStorageSync(FLOW_KEY) }
   align-items: center;
   justify-content: center;
   height: 240rpx;
-  background: #f6f8fb;
-  border: 2rpx dashed #d0d7e2;
-  border-radius: 16rpx;
+  background: #F5F7FA;
+  border: 2rpx dashed #CBD5E1;
+  border-radius: 20rpx;
   transition: all 0.2s;
 
   &:active {
-    background: #edf0f5;
-    border-color: #aab3c0;
+    background: #E0EEFF;
+    border-color: #2E7DFF;
   }
 
   .upload-icon {
     font-size: 60rpx;
-    color: #8d98a9;
+    color: #9CA3AF;
     font-weight: 300;
     line-height: 1;
   }
 
   .upload-text {
     font-size: 26rpx;
-    color: #6b7688;
+    color: #6B7280;
     margin-top: 16rpx;
   }
 
   .upload-hint {
     font-size: 21rpx;
-    color: #aab3c0;
+    color: #9CA3AF;
     margin-top: 8rpx;
   }
 }
 
 .image-preview {
   position: relative;
-  background: #f6f8fb;
-  border-radius: 16rpx;
+  background: #F5F7FA;
+  border-radius: 20rpx;
   overflow: hidden;
 
   .preview-image {
@@ -647,14 +710,14 @@ function clearFlow() { uni.removeStorageSync(FLOW_KEY) }
       line-height: 72rpx;
       font-size: 26rpx;
       font-weight: 600;
-      border-radius: 12rpx;
+      border-radius: 16rpx;
       background: #fff;
-      color: #344158;
+      color: #1F2937;
       border: none;
 
       &.danger {
-        background: #fff0f0;
-        color: #e3483e;
+        background: #FEF2F2;
+        color: #EF4444;
       }
 
       &:active {
@@ -669,13 +732,13 @@ function clearFlow() { uni.removeStorageSync(FLOW_KEY) }
 
   .progress-bar {
     height: 8rpx;
-    background: #edf0f5;
+    background: #EDF0F5;
     border-radius: 4rpx;
     overflow: hidden;
 
     .progress-fill {
       height: 100%;
-      background: linear-gradient(90deg, #175cd3, #4d8eff);
+      background: #2E7DFF;
       border-radius: 4rpx;
       transition: width 0.3s ease;
     }
@@ -685,23 +748,24 @@ function clearFlow() { uni.removeStorageSync(FLOW_KEY) }
     display: block;
     text-align: center;
     font-size: 22rpx;
-    color: #8d98a9;
+    color: #9CA3AF;
     margin-top: 10rpx;
   }
 }
 
 /* 下拉选择样式 */
 .select-display {
-  height: 86rpx;
-  border-radius: 14rpx;
-  background: #f6f8fb;
-  padding: 0 22rpx;
+  height: 92rpx;
+  border-radius: 20rpx;
+  background: #F5F7FA;
+  padding: 0 26rpx;
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-size: 28rpx;
+  color: #1F2937;
 
-  .placeholder { color: #aab3c0; }
-  .select-arrow { color: #8d98a9; font-size: 24rpx; }
+  .placeholder { color: #9CA3AF; }
+  .select-arrow { color: #9CA3AF; font-size: 24rpx; }
 }
 </style>

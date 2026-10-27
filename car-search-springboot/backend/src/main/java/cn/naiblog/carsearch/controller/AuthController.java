@@ -81,6 +81,27 @@ public class AuthController {
         return ApiResponse.ok(null, "已安全退出");
     }
 
+    /**
+     * 注销账号：有进行中订单（已支付/查询中/待核对/退款中）时拒绝；
+     * 否则匿名化资料（昵称/头像/手机号/unionid/session_key）、openid 置墓碑值解绑、status=0 作废登录态并删除全部 token。
+     * 注销后同一微信下次登录将创建全新账号，历史订单归属旧账号不可再查看。
+     */
+    @PostMapping("/auth/deactivate") @Transactional
+    public ApiResponse<Object> deactivate(HttpServletRequest request) {
+        CurrentUser user = api.user(request);
+        List<Map<String, Object>> active = jdbc.queryForList(
+                "select order_no from ci_order where user_id=? and status in ('paid','querying','payment_review','refunding') limit 1",
+                user.id());
+        if (!active.isEmpty()) throw new BusinessException("存在进行中的订单，完成或退款后才能注销账号");
+        LocalDateTime now = LocalDateTime.now();
+        // openid 为 NOT NULL + 唯一键：用墓碑值解绑（id 保证唯一），下次微信登录走新建账号
+        String tombstone = "deleted_" + user.id() + "_" + System.currentTimeMillis();
+        jdbc.update("update ci_user set openid=?,unionid=NULL,nickname='已注销用户',avatar_url='',phone='',"
+                + "session_key_cipher=NULL,status=0,updated_at=? where id=?", tombstone, now, user.id());
+        jdbc.update("delete from ci_user_token where user_id=?", user.id());
+        return ApiResponse.ok(null, "账号已注销");
+    }
+
     private String trimToLength(String value, int length) {
         String text = value == null ? "" : value.trim();
         return text.codePointCount(0, text.length()) <= length ? text : text.substring(0, text.offsetByCodePoints(0, length));

@@ -71,5 +71,11 @@ const retentionDays=computed(()=>Math.max(1,Number(settings.value.privacy_retent
 onLoad(async()=>{try{const data=await request('/bootstrap',{public:true});settings.value=data.settings||{};uni.setStorageSync('app_settings',settings.value)}catch(_){}})
 </script>
 <style lang="scss" scoped>
-.agreement-page{padding:24rpx 24rpx 55rpx}.document-head{padding:24rpx 8rpx 30rpx}.document-title{font-size:38rpx;font-weight:800;color:#17243a}.document-meta{font-size:22rpx;color:#8a95a6;margin-top:10rpx}.section{padding:32rpx;margin-bottom:20rpx;color:#59687e;font-size:25rpx;line-height:1.9}.section>view:not(.title){margin-top:10rpx}.title{font-size:30rpx;font-weight:800;color:#1d2a41;margin-bottom:14rpx}
+.agreement-page{padding:28rpx 28rpx 55rpx;background:#F5F7FA}
+.document-head{padding:28rpx 8rpx 32rpx}
+.document-title{font-size:40rpx;font-weight:700;color:#1F2937}
+.document-meta{font-size:22rpx;color:#9CA3AF;margin-top:10rpx}
+.section{padding:34rpx 30rpx;margin-bottom:22rpx;color:#6B7280;font-size:25rpx;line-height:1.9;border-radius:24rpx}
+.section>view:not(.title){margin-top:10rpx}
+.title{font-size:30rpx;font-weight:700;color:#1F2937;margin-bottom:14rpx}
 </style>

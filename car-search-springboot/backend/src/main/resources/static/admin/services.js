@@ -208,7 +208,7 @@ function openServiceEditor(service) {
       </div>
 
       <div class="form-section"><div class="section-title-row"><div><h4>用户输入字段</h4><p>参数名必须与供应商接口参数一致</p></div><button type="button" class="action add-input">+ 添加字段</button></div><div id="input-fields">${item.input_schema.map(inputRow).join('')}</div></div>
-      <div class="form-section"><div class="section-title-row"><div><h4>结果展示字段</h4><p>支持点号路径（如 vehicle.brand）和数组标记（如 content[]）</p></div><button type="button" class="action add-result">+ 添加字段</button></div><div id="result-fields">${item.result_schema.map(resultRow).join('')}</div></div>
+      <div class="form-section"><div class="section-title-row"><div><h4>结果展示字段</h4><p>支持点号路径（如 vehicle.brand）、数组标记（如 content[]）和数组子字段（如 content[].title，按配置顺序展示）</p></div><button type="button" class="action add-result">+ 添加字段</button></div><div id="result-fields">${item.result_schema.map(resultRow).join('')}</div></div>
       <div id="service-form-error" class="form-error"></div><div class="drawer-actions"><button type="button" class="secondary drawer-cancel">取消</button><button type="submit" class="primary save-service">保存接口服务</button></div>
     </form></div></div>`
 

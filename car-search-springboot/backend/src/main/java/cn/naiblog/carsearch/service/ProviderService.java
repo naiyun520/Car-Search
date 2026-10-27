@@ -688,32 +688,25 @@ public class ProviderService {
         log.info("[Normalize] result_schema={}", schemaJson);
         log.info("[Normalize] 原始数据 keys={}, data={}", data.keySet(), data);
         Map<String,Object> schema=mapper.readValue(schemaJson,new TypeReference<LinkedHashMap<String,Object>>(){});
+        // 收集数组子字段映射：X[].field 归属 X[] 分组，配置顺序即展示顺序
+        Map<String,List<String[]>> groupFields=new LinkedHashMap<>();
+        for(var e:schema.entrySet()){
+            String key=schemaKey(e.getKey());
+            int idx=key.indexOf("[].");
+            if(idx>0){
+                String group=key.substring(0,idx)+"[]";
+                groupFields.computeIfAbsent(group,g->new ArrayList<>()).add(new String[]{key.substring(idx+3),String.valueOf(e.getValue())});
+            }
+        }
         List<Map<String,Object>> out=new ArrayList<>();
         for(var e:schema.entrySet()){
-            String key=e.getKey();
+            String key=schemaKey(e.getKey());
+            if(key.contains("[]."))continue; // 子字段并入所属数组分组项
             boolean isArray=key.endsWith("[]");
             String actualKey=isArray?key.substring(0,key.length()-2):key;
 
             if(isArray){
-                // 数组字段：保留完整 List，格式化全部元素
-                Object raw=path(data,actualKey,false);
-                log.info("[Normalize] 数组字段 key={}, raw={}", key, raw);
-                if(raw instanceof List<?> list){
-                    List<Object> formatted=ResultValueFormatter.formatList(actualKey,list);
-                    Map<String,Object> item=new LinkedHashMap<>();
-                    item.put("key",key);item.put("label",e.getValue());
-                    item.put("value",formatted.isEmpty()?"暂无数据":formatted);
-                    item.put("display","array");
-                    out.add(item);
-                }else{
-                    // 值不是数组，降级为普通字段处理
-                    Object v=ResultValueFormatter.format(key,raw);
-                    if(v instanceof String s)v=truncate(s,2000);
-                    Map<String,Object> item=new LinkedHashMap<>();
-                    item.put("key",key);item.put("label",e.getValue());
-                    item.put("value",v==null||"".equals(v)?"暂无数据":v);
-                    out.add(item);
-                }
+                out.add(arrayItem(data,actualKey,key,String.valueOf(e.getValue()),groupFields.get(key)));
             }else{
                 // 普通字段：单值提取（原有逻辑）
                 Object raw=path(data,actualKey);
@@ -726,8 +719,55 @@ public class ProviderService {
                 out.add(item);
             }
         }
+        // 仅有 X[].field 而缺 X[] 标题的分组：补一个分组项兜底
+        for(var g:groupFields.entrySet()){
+            String group=g.getKey();
+            if(out.stream().noneMatch(m->group.equals(m.get("key")))){
+                out.add(arrayItem(data,group.substring(0,group.length()-2),group,"查询数据",g.getValue()));
+            }
+        }
         log.info("[Normalize] 最终结果 count={}, data={}", out.size(), out);
         return out;
+    }
+    /** schema 键容错：去掉方括号前的空格（如 "tab []"→"tab[]"），避免路径带尾空格查不到数据 */
+    private static String schemaKey(Object key){return String.valueOf(key).replace(" []","[]").trim();}
+    /** 构建数组展示项：无子字段映射时原样展示整组（兼容旧配置），有映射时按配置字段逐行提取 */
+    private Map<String,Object> arrayItem(Map<String,Object> data,String actualKey,String key,String label,List<String[]>fields){
+        Object raw=path(data,actualKey,false);
+        log.info("[Normalize] 数组字段 key={}, raw={}, 子字段数={}", key, raw, fields==null?0:fields.size());
+        Map<String,Object> item=new LinkedHashMap<>();
+        item.put("key",key);item.put("label",label);
+        if(raw instanceof List<?>list){
+            item.put("display","array");
+            if(fields==null||fields.isEmpty()){
+                // 旧配置行为：整组原样输出
+                List<Object> formatted=ResultValueFormatter.formatList(actualKey,list);
+                item.put("value",formatted.isEmpty()?"暂无数据":formatted);
+            }else{
+                // 子字段映射：仅输出配置字段，列顺序=配置顺序
+                List<Map<String,Object>>columns=new ArrayList<>(fields.size());
+                for(String[]f:fields)columns.add(Map.of("key",f[0],"label",f[1]));
+                item.put("columns",columns);
+                List<Object>rows=new ArrayList<>(list.size());
+                for(Object element:list){
+                    Map<String,Object>row=new LinkedHashMap<>();
+                    for(String[]f:fields){
+                        // keepList=false：子字段指向数组时保留整组（如维修列表），不再只取第一个元素
+                        Object v=ResultValueFormatter.format(f[0],element instanceof Map<?,?>m?path(m,f[0],false):null);
+                        if(v instanceof String s)v=truncate(s,2000);
+                        row.put(f[0],v==null||"".equals(v)?"暂无数据":v);
+                    }
+                    rows.add(row);
+                }
+                item.put("value",rows.isEmpty()?"暂无数据":rows);
+            }
+        }else{
+            // 值不是数组，降级为普通字段处理
+            Object v=ResultValueFormatter.format(key,raw);
+            if(v instanceof String s)v=truncate(s,2000);
+            item.put("value",v==null||"".equals(v)?"暂无数据":v);
+        }
+        return item;
     }
     @SuppressWarnings("unchecked")private Map<String,Object> cast(Map<?,?>m){return(Map<String,Object>)m;}private String truncate(String s,int n){return s.codePointCount(0,s.length())<=n?s:s.substring(0,s.offsetByCodePoints(0,n));}
     public record Result(String code,String requestId,List<Map<String,Object>> data){}

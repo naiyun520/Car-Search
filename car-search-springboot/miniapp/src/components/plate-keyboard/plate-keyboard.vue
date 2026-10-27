@@ -120,7 +120,7 @@ function close() {
   left: 0;
   right: 0;
   bottom: 0;
-  background: #e8ecf0;
+  background: #EEF1F5;
   padding: 12rpx 8rpx calc(12rpx + env(safe-area-inset-bottom));
   z-index: 1000;
   animation: slideUp 0.2s ease;
@@ -139,7 +139,7 @@ function close() {
 
 .paste-tip {
   font-size: 22rpx;
-  color: #8b96a7;
+  color: #9CA3AF;
 }
 
 .key-row {
@@ -157,24 +157,24 @@ function close() {
   align-items: center;
   justify-content: center;
   background: #fff;
-  border-radius: 12rpx;
+  border-radius: 16rpx;
   font-size: 28rpx;
   font-weight: 500;
-  color: #223049;
-  box-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.06);
+  color: #1F2937;
+  box-shadow: 0 2rpx 8rpx rgba(31, 41, 55, 0.06);
 
   &:active {
-    background: #d1d5db;
+    background: #E5E7EB;
   }
 
   &.wide {
     min-width: 100rpx;
     font-size: 24rpx;
-    background: #adb4be;
+    background: #D8DEE6;
     color: #fff;
 
     &:active {
-      background: #9ca3af;
+      background: #B9C2CE;
     }
   }
 }

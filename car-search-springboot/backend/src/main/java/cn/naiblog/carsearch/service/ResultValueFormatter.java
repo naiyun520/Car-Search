@@ -78,6 +78,46 @@ public final class ResultValueFormatter {
             }
         }
 
+        // order_status 枚举（过户等异步接口）
+        if ("order_status".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) {
+                return switch (code) {
+                    case 0 -> "查询中";
+                    case 1 -> "查询成功";
+                    case 2 -> "查询失败";
+                    default -> code;
+                };
+            }
+        }
+
+        // change_month 过户年月：201606 → 2016-06（已带分隔符的原样返回，保证幂等）
+        if ("change_month".equals(last) && value instanceof String s) {
+            String t = s.trim();
+            if (t.matches("\\d{6}")) return t.substring(0, 4) + "-" + t.substring(4);
+            if (t.matches("\\d{8}")) return t.substring(0, 4) + "-" + t.substring(4, 6) + "-" + t.substring(6);
+        }
+
+        // schedule 是否调表（里程 info.schedule / content[].schedule）: 0→正常, 1→调表
+        if ("schedule".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) return code == 1 ? "调表" : "正常";
+        }
+
+        // hasErr 里程核验异常标记: true→异常, false→正常
+        if ("hasErr".equals(last)) {
+            if (value instanceof Boolean b) return b ? "异常" : "正常";
+            if (value instanceof String s) {
+                String t = s.trim();
+                if ("true".equalsIgnoreCase(t)) return "异常";
+                if ("false".equalsIgnoreCase(t)) return "正常";
+            }
+        }
+
         // car_is_fire / car_is_water 布尔映射
         if ("car_is_fire".equals(last) || "car_is_water".equals(last)) {
             Integer code = null;

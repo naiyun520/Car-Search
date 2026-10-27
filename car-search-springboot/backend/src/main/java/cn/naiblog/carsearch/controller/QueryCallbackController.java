@@ -1,8 +1,12 @@
 package cn.naiblog.carsearch.controller;
 
+import cn.naiblog.carsearch.api.ApiResponse;
+import cn.naiblog.carsearch.api.ApiSupport;
+import cn.naiblog.carsearch.api.BusinessException;
 import cn.naiblog.carsearch.security.CryptoService;
 import cn.naiblog.carsearch.service.PaymentDeliveryService;
 import cn.naiblog.carsearch.service.ProviderService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -17,7 +21,7 @@ import java.util.concurrent.CompletableFuture;
 /**
  * 查询回调控制器
  * 1. 接收供应商回调结果 POST /api/callback/provider/{serviceId}
- * 2. 小程序轮询查询状态 GET /api/query-status/{queryId}
+ * 2. 小程序轮询查询状态 GET /api/v1/query-status/{queryId}（需登录且仅限订单归属用户）
  */
 @RestController
 public class QueryCallbackController {
@@ -27,14 +31,17 @@ public class QueryCallbackController {
     private final CryptoService crypto;
     private final PaymentDeliveryService delivery;
     private final ObjectMapper mapper;
+    private final ApiSupport api;
 
     public QueryCallbackController(JdbcTemplate jdbc, ProviderService providerService,
-                                   CryptoService crypto, PaymentDeliveryService delivery, ObjectMapper mapper) {
+                                   CryptoService crypto, PaymentDeliveryService delivery,
+                                   ObjectMapper mapper, ApiSupport api) {
         this.jdbc = jdbc;
         this.providerService = providerService;
         this.crypto = crypto;
         this.delivery = delivery;
         this.mapper = mapper;
+        this.api = api;
     }
 
     /**
@@ -212,25 +219,33 @@ public class QueryCallbackController {
 
     /**
      * 小程序轮询查询状态
-     * GET /api/query-status/{queryId}
+     * GET /api/v1/query-status/{queryId}（归属校验：query_id 必须对应当前用户的订单）
      */
-    @GetMapping("/api/query-status/{queryId}")
-    public Map<String, Object> queryStatus(@PathVariable String queryId) {
+    @GetMapping("/api/v1/query-status/{queryId}")
+    public ApiResponse<Map<String, Object>> queryStatus(@PathVariable String queryId, HttpServletRequest request) {
         log.info("[QueryStatus] 查询状态 queryId={}", queryId);
+
+        // 归属校验：防止任意登录用户凭 queryId 读取他人查询状态与结果
+        long userId = api.user(request).id();
+        List<Map<String, Object>> owned = jdbc.queryForList(
+                "select id from ci_order where provider_request_id=? and user_id=? limit 1", queryId, userId);
+        if (owned.isEmpty()) {
+            throw new BusinessException("查询记录不存在或无权访问");
+        }
 
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "select id, query_id, service_id, status, result_json, result_code, result_message, " +
                         "callback_received_at, fallback_at, created_at from ci_query where query_id=?", queryId);
 
         if (rows.isEmpty()) {
-            return Map.of("code", -1, "message", "查询记录不存在");
+            throw new BusinessException("查询记录不存在");
         }
 
         Map<String, Object> row = rows.getFirst();
         String status = String.valueOf(row.getOrDefault("status", "unknown"));
 
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("code", 0);
+        response.put("code", 0); // 兼容旧版小程序：request() 解包 data 后仍读取 code===0
         response.put("query_id", queryId);
         response.put("status", status);
         response.put("created_at", row.get("created_at"));
@@ -262,7 +277,7 @@ public class QueryCallbackController {
             }
         }
 
-        return response;
+        return ApiResponse.ok(response);
     }
 
     /**

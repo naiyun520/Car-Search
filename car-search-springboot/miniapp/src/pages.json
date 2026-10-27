@@ -8,10 +8,10 @@
     { "path": "pages/my/my", "style": { "navigationStyle": "custom" } }
   ],
   "tabBar": {
-    "color": "#7b8798",
-    "selectedColor": "#0f55b8",
+    "color": "#9CA3AF",
+    "selectedColor": "#2E7DFF",
     "backgroundColor": "#ffffff",
-    "borderStyle": "black",
+    "borderStyle": "white",
     "list": [
       { "pagePath": "pages/index/index", "text": "首页", "iconPath": "static/icons/tabbar/home.png", "selectedIconPath": "static/icons/tabbar/home-active.png" },
       { "pagePath": "pages/my/my", "text": "我的", "iconPath": "static/icons/tabbar/user.png", "selectedIconPath": "static/icons/tabbar/user-active.png" }
@@ -19,8 +19,8 @@
   },
   "globalStyle": {
     "navigationBarTextStyle": "black",
-    "navigationBarTitleText": "车辆信息查询",
+    "navigationBarTitleText": "车档查",
     "navigationBarBackgroundColor": "#ffffff",
-    "backgroundColor": "#f4f7fb"
+    "backgroundColor": "#F5F7FA"
   }
 }
