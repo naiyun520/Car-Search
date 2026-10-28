@@ -63,6 +63,52 @@ public final class ResultValueFormatter {
             }
         }
 
+        // check_result 人车核验：1=一致 2=不一致 3=查无
+        if ("check_result".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) {
+                return switch (code) {
+                    case 1 -> "一致";
+                    case 2 -> "不一致";
+                    case 3 -> "查无";
+                    default -> code;
+                };
+            }
+        }
+
+        // total_loss 是否全损（理赔定损报告）: 0=否 1=是（推定全损）
+        if ("total_loss".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) {
+                return switch (code) {
+                    case 0 -> "否";
+                    case 1 -> "是（推定全损）";
+                    default -> code;
+                };
+            }
+        }
+
+        // major_accident 重大事故类型（理赔定损报告）: 0=无大事故 1=碰撞 2=水淹 3=火烧 4=拆解
+        if ("major_accident".equals(last)) {
+            Integer code = null;
+            if (value instanceof Number n) code = n.intValue();
+            else if (value instanceof String s) try { code = Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+            if (code != null) {
+                return switch (code) {
+                    case 0 -> "无大事故";
+                    case 1 -> "碰撞";
+                    case 2 -> "水淹";
+                    case 3 -> "火烧";
+                    case 4 -> "拆解";
+                    default -> code;
+                };
+            }
+        }
+
         // result_status 枚举（维保等接口）
         if ("result_status".equals(last)) {
             Integer code = null;

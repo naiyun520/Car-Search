@@ -165,7 +165,7 @@ function openServiceEditor(service) {
         <label>服务名称<input name="name" value="${escapeHtml(item.name)}" required></label>
         <label>前端简称<input name="short_name" value="${escapeHtml(item.short_name)}" required></label>
         <label>内置服务图标<select name="builtin_icon">${builtinIcons.map(icon=>`<option value="${icon[0]}" ${String(item.icon).replace(/^builtin:/,'')===icon[0]?'selected':''}>${icon[1]}</option>`).join('')}</select><small class="field-note">也可在下一项上传自定义图片覆盖</small></label>
-        <label>自定义图标<input name="icon_file" type="file" accept="image/png,image/jpeg,image/webp"><small class="field-note">${currentIcon?`<img class="service-icon-preview" src="${currentIcon}" alt="当前图标"> 当前图标；选择新文件后保存替换`:'PNG、JPG 或 WebP，32-1024像素，最大48KB'}</small></label>
+        <label>自定义图标<input name="icon_file" type="file" accept="image/png,image/jpeg,image/webp"><small class="field-note">${currentIcon?`<img class="service-icon-preview" src="${currentIcon}" alt="当前图标"> 当前图标；选择新文件后保存替换`:'PNG、JPG 或 WebP，32-1024像素，最大75KB'}</small></label>
         <label>安卓售价（元）<input name="sale_price_android" type="number" min="1" step="0.01" value="${item.sale_price_android}" required></label>
         <label>iOS售价（元）<input name="sale_price_ios" type="number" min="1" step="0.01" value="${item.sale_price_ios}" required><small class="field-note">Apple 支付最低1元，需与iOS道具价格一致</small></label>
         <label>成本价（元）<input name="cost_price" type="number" min="0" step="0.0001" value="${item.cost_price}" required></label>
@@ -283,7 +283,7 @@ function openServiceEditor(service) {
       const saved=await api(service?`/services/${service.id}/update`:'/services',{method:'POST',data:fields})
       const serviceId=Number(saved?.id||service?.id||0)
       if(iconFile instanceof File && iconFile.size){
-        if(iconFile.size>48*1024)throw new Error('服务图标不能超过48KB')
+        if(iconFile.size>75*1024)throw new Error('服务图标不能超过75KB')
         const upload=new FormData();upload.append('icon',iconFile)
         const response=await fetch(`${API}/service-icon-upload/${serviceId}`,{method:'POST',headers:{Authorization:`Bearer ${token}`},body:upload,cache:'no-store'})
         const body=await response.json().catch(()=>({}))

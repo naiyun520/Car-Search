@@ -11,7 +11,9 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
@@ -19,6 +21,9 @@ import java.util.*;
 public class CheckoutService {
     private final JdbcTemplate jdbc; private final CryptoService crypto; private final ObjectMapper mapper; private final VirtualPaymentService payment; private final QueryRunnerService queries; private final PaymentReconciliationService reconciliation;private final PaymentDeliveryService delivery;private final SettingService settings;
     private final SecureRandom random=new SecureRandom();
+    /** 一级（单次查询）结果保留时长：从结果生成时间(queried_at)起 24 小时，到期后不再返回结果 */
+    private static final long RESULT_RETENTION_HOURS=24;
+    private static final DateTimeFormatter MINUTE_FORMAT=DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     public CheckoutService(JdbcTemplate jdbc,CryptoService crypto,ObjectMapper mapper,VirtualPaymentService payment,QueryRunnerService queries,PaymentReconciliationService reconciliation,PaymentDeliveryService delivery,SettingService settings){this.jdbc=jdbc;this.crypto=crypto;this.mapper=mapper;this.payment=payment;this.queries=queries;this.reconciliation=reconciliation;this.delivery=delivery;this.settings=settings;}
 
     @Transactional
@@ -41,14 +46,12 @@ public class CheckoutService {
     public Map<String,Object> status(long userId,String no){Map<String,Object>o=owned(userId,no);if(List.of("pending_payment","payment_review").contains(String.valueOf(o.get("status"))))reconciliation.reconcile(o,userRow(userId));return detail(owned(userId,no));}
     public Map<String,Object> payment(long userId,String no,String requestedPlatform){Map<String,Object>o=owned(userId,no);String platform=payment.normalizePlatform(requestedPlatform);if(requestedPlatform==null||requestedPlatform.isBlank())throw new BusinessException("客户端未提交支付平台，请更新小程序后重试");if(!platform.equals(String.valueOf(o.get("client_platform"))))throw new BusinessException("当前设备平台与订单不一致，请返回服务页重新下单，原订单不会扣款");if(!"pending_payment".equals(o.get("status")))return paymentResult(detail(o),null);Map<String,Object>u=userRow(userId);reconciliation.reconcile(o,u);o=owned(userId,no);if(!"pending_payment".equals(o.get("status")))return paymentResult(detail(o),null);Object exp=o.get("expired_at");if(exp instanceof java.sql.Timestamp t&&t.toLocalDateTime().isBefore(LocalDateTime.now())){jdbc.update("update ci_order set status='cancelled',updated_at=? where id=? and status='pending_payment'",LocalDateTime.now(),o.get("id"));o.put("status","cancelled");return paymentResult(detail(o),null);}Map<String,Object>s=crypto.decrypt(String.valueOf(o.getOrDefault("service_snapshot_cipher","")));if(s.isEmpty())throw new IllegalStateException("订单支付配置快照不可用，请联系客服处理");return paymentResult(safe(o),payment.clientParams(o,u,s));}
     public Map<String,Object> query(long userId,String no){Map<String,Object> o=owned(userId,no);if("paid".equals(o.get("status")))queries.run(o);return detail(owned(userId,no));}
-    public Object recoverable(long userId){List<Map<String,Object>> rows=jdbc.queryForList("select * from ci_order where user_id=? and paid_at is not null and status in ('paid','querying','query_failed','success','payment_review') and created_at>=? order by id desc limit 1",userId,LocalDateTime.now().minusHours(24));return rows.isEmpty()?null:detail(rows.getFirst());}
-    /** 标记单次查询结果为已查看（仅限 sync 模式，由结果页主动调用） */
+    public Object recoverable(long userId){List<Map<String,Object>> rows=jdbc.queryForList("select * from ci_order where user_id=? and paid_at is not null and status in ('paid','querying','query_failed','success','payment_review') and created_at>=? order by id desc limit 1",userId,LocalDateTime.now().minusHours(24));if(rows.isEmpty())return null;Map<String,Object> d=detail(rows.getFirst());return Boolean.TRUE.equals(d.get("result_expired"))?null:d;}
+    /** 记录结果首次查看时间，仅用于运营埋点；结果可见性由「生成后 24 小时」有效期决定，与查看行为无关 */
     public void markResultViewed(long userId,String no){
         Map<String,Object>o=owned(userId,no);
         if(!"success".equals(o.get("status"))||o.get("result_cipher")==null)return;
-        String providerRequestId=String.valueOf(o.getOrDefault("provider_request_id",""));
-        boolean isAsync=!providerRequestId.isBlank()&&!"null".equals(providerRequestId);
-        if(!isAsync){
+        if(o.get("result_viewed_at")==null){
             jdbc.update("update ci_order set result_viewed_at=? where id=? and result_viewed_at is null",LocalDateTime.now(),o.get("id"));
         }
     }
@@ -56,15 +59,30 @@ public class CheckoutService {
     public Map<String,Object> safe(Map<String,Object> o){Map<String,Object> r=new LinkedHashMap<>();for(String k:List.of("order_no","service_name","amount","client_platform","status","paid_at","queried_at","created_at"))r.put(k,o.get(k));return r;}
     public Map<String,Object> detail(Map<String,Object> o){
         Map<String,Object> r=safe(o);
+        if("success".equals(o.get("status"))&&o.get("result_cipher")==null){
+            // 密文已被清理（历史阅后销毁订单 / 隐私保留期到期），结果无法再展示
+            r.put("result_expired",true);
+            r.put("result_destroyed",true);
+            r.put("message","该查询结果已超过保留期，无法再次查看，如需查看请重新查询。");
+        }
         if("success".equals(o.get("status"))&&o.get("result_cipher")!=null){
-            // 判断是否为二级查询（有 provider_request_id 说明是 async/callback 模式）
-            String providerRequestId=String.valueOf(o.getOrDefault("provider_request_id",""));
-            boolean isAsync=!providerRequestId.isBlank()&&!"null".equals(providerRequestId);
-
-            if(!isAsync&&o.get("result_viewed_at")!=null){
-                // 单次查询已查看过，不再返回结果
+            // 二级查询（异步/回调）结果长期可查看；一级查询（单次）结果自生成起仅保留 24 小时
+            boolean longLived=isLongLived(o);
+            LocalDateTime expiresAt=longLived?null:expiryOf(o);
+            boolean expired=expiresAt!=null&&!LocalDateTime.now().isBefore(expiresAt);
+            if(longLived){
+                r.put("result_retention","permanent");
+            }else if(expiresAt!=null){
+                r.put("result_retention","limited");
+                r.put("result_expires_at",expiresAt.format(MINUTE_FORMAT));
+                r.put("result_remaining_seconds",Math.max(0,Duration.between(LocalDateTime.now(),expiresAt).getSeconds()));
+            }
+            if(expired){
+                r.put("result_expired",true);
+                r.put("result_expired_at",expiresAt.format(MINUTE_FORMAT));
+                // 兼容旧版小程序：仍按「结果已销毁」提示，避免旧包展示空白报告
                 r.put("result_destroyed",true);
-                r.put("message","查询结果已销毁，退出后无法再次查看。如需再次查询请重新付费。");
+                r.put("message","查询结果自生成起仅保留 24 小时，已于 "+expiresAt.format(MINUTE_FORMAT)+" 到期，如需再次查看请重新查询。");
             }else{
                 r.put("result",ResultValueFormatter.formatItems(crypto.decrypt(String.valueOf(o.get("result_cipher"))).getOrDefault("items",List.of())));
             }
@@ -101,6 +119,37 @@ public class CheckoutService {
         return r;
     }
     private void delivery(Map<String,Object>o){delivery.deliver(String.valueOf(o.get("order_no")),false);}
+    /** 二级查询（异步/回调）判定：这类结果长期可查看，不受 24 小时有效期约束 */
+    private boolean isLongLived(Map<String,Object> o){
+        String providerRequestId=String.valueOf(o.getOrDefault("provider_request_id",""));
+        if(!providerRequestId.isBlank()&&!"null".equals(providerRequestId))return true;
+        Map<String,Object> snapshot=crypto.decrypt(String.valueOf(o.getOrDefault("service_snapshot_cipher","")));
+        if(!snapshot.isEmpty())return asyncMode(snapshot);
+        // 快照不可解密时退回当前服务配置，避免把二级订单误判成一级而提前过期
+        Object serviceId=o.get("service_id");
+        if(serviceId instanceof Number id){
+            List<Map<String,Object>> rows=jdbc.queryForList("select query_mode,callback_mode from ci_service where id=?",id.longValue());
+            if(!rows.isEmpty())return asyncMode(rows.getFirst());
+        }
+        return false;
+    }
+    private boolean asyncMode(Map<String,Object> s){
+        return "async".equals(String.valueOf(s.getOrDefault("query_mode","single")))||"callback".equals(String.valueOf(s.getOrDefault("callback_mode","none")));
+    }
+    /** 一级查询结果过期时间：结果生成时间(queried_at) + 24 小时，缺失时退回订单创建时间 */
+    private LocalDateTime expiryOf(Map<String,Object> o){
+        LocalDateTime generated=firstTime(o.get("queried_at"),o.get("created_at"));
+        return generated==null?null:generated.plusHours(RESULT_RETENTION_HOURS);
+    }
+    private LocalDateTime firstTime(Object... values){
+        for(Object v:values){
+            if(v instanceof java.sql.Timestamp t)return t.toLocalDateTime();
+            if(v instanceof LocalDateTime t)return t;
+            if(v instanceof java.time.OffsetDateTime t)return t.toLocalDateTime();
+            if(v instanceof java.util.Date d)return LocalDateTime.ofInstant(d.toInstant(),ZoneId.systemDefault());
+        }
+        return null;
+    }
     private Map<String,Object> owned(long uid,String no){List<Map<String,Object>> rows=jdbc.queryForList("select * from ci_order where order_no=? and user_id=? limit 1",no,uid);if(rows.isEmpty())throw new BusinessException("订单不存在或无权访问");return rows.getFirst();}
     private Map<String,Object> result(Map<String,Object> o,Object p,boolean reused){Map<String,Object> r=new LinkedHashMap<>();r.put("order",safe(o));r.put("payment",p);r.put("reused",reused);return r;}
     private Map<String,Object> paymentResult(Object o,Object p){Map<String,Object>r=new LinkedHashMap<>();r.put("order",o);r.put("payment",p);return r;}

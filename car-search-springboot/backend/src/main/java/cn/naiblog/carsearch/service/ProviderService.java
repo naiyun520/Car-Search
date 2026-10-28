@@ -474,7 +474,9 @@ public class ProviderService {
 
                 if(isSuccess){
                     Object reportData=fr.get("result");
-                    if(!(reportData instanceof Map))throw new IllegalStateException("报告数据格式无效");
+                    // 兼容两种报告结构：部分供应商在 result 里再嵌一层 result（旧结构）；
+                    // 官方文档为平铺结构——result 即报告本身，result_status 与报告字段同级
+                    if(!(reportData instanceof Map))reportData=fr;
                     @SuppressWarnings("unchecked")Map<String,Object> report=(Map<String,Object>)reportData;
                     return new Result(successValue,queryId,normalize(service,report));
                 }

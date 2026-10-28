@@ -47,6 +47,28 @@ class ProviderServiceTest {
         assertEquals("不匹配",ResultValueFormatter.formatItems(java.util.List.of(Map.of("key","state","label","核验结果","value","2"))).getFirst().get("value"));
     }
 
+    /** 人车核验 check_result：1=一致 2=不一致 3=查无（数值与字符串码都识别，非枚举值原样返回） */
+    @Test
+    void checkResultTranslatesVehicleOwnerCodes() {
+        assertEquals("一致", ResultValueFormatter.format("check_result", 1));
+        assertEquals("不一致", ResultValueFormatter.format("check_result", "2"));
+        assertEquals("查无", ResultValueFormatter.format("check_result", 3));
+        assertEquals("一致", ResultValueFormatter.format("check_result", "一致"));
+    }
+
+    /** 理赔定损报告：total_loss 0否/1是（推定全损），major_accident 0无大事故~4拆解 */
+    @Test
+    void claimAssessmentTranscodesTotalLossAndMajorAccident() {
+        assertEquals("否", ResultValueFormatter.format("report.total_loss", 0));
+        assertEquals("是（推定全损）", ResultValueFormatter.format("report.total_loss", "1"));
+        assertEquals("无大事故", ResultValueFormatter.format("report.major_accident", 0));
+        assertEquals("碰撞", ResultValueFormatter.format("report.major_accident", "1"));
+        assertEquals("拆解", ResultValueFormatter.format("report.major_accident", 4));
+        // 幂等：已翻译文本原样返回
+        assertEquals("否", ResultValueFormatter.format("report.total_loss", "否"));
+        assertEquals("拆解", ResultValueFormatter.format("report.major_accident", "拆解"));
+    }
+
     @Test
     void arraySubFieldMappingBuildsColumnsAndRows() throws Exception {
         String schema="{\"order_status\":\"订单状态\",\"data[]\":\"过户记录\","

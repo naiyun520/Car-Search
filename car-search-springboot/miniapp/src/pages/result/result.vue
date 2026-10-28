@@ -36,12 +36,12 @@
       </view>
     </view>
 
-    <!-- ===== 结果已销毁 ===== -->
-    <view class="status-banner banner-destroyed" v-else-if="isDestroyed">
+    <!-- ===== 结果已过期（一级查询结果仅保留 24 小时） ===== -->
+    <view class="status-banner banner-destroyed" v-else-if="isExpired">
       <view class="banner-icon">!</view>
       <view class="banner-main">
-        <view class="banner-title">结果已销毁</view>
-        <view class="banner-sub">{{ order.message || '查询结果已销毁，退出后无法再次查看' }}</view>
+        <view class="banner-title">查询结果已过期</view>
+        <view class="banner-sub">{{ order.message || '查询结果仅保留 24 小时，如需再次查看请重新查询' }}</view>
       </view>
     </view>
 
@@ -53,6 +53,11 @@
           <view class="banner-title">{{ isDemo ? '示例报告' : (isMissing ? '未查询到信息' : '查询完成') }}</view>
           <view class="banner-sub">{{ isDemo ? '以下为模拟数据，仅供预览参考，非真实查询结果' : (isMissing ? '本次查询未返回可展示的数据' : `结果生成时间 ${order.queried_at || '-'}`) }}</view>
         </view>
+      </view>
+
+      <!-- 结果有效期：一级查询 24 小时、二级查询长期可看 -->
+      <view class="retention-tip" v-if="retentionText">
+        <text class="retention-icon">◷</text><text>{{ retentionText }}</text>
       </view>
 
       <!-- 未查询到 → 退款指引 -->
@@ -116,9 +121,48 @@
           </view>
         </template>
 
-        <!-- 核验结论横幅（人车关系 / ETC 核验类） -->
-        <view class="conclusion card" v-if="conclusion" :class="conclusion.isMatch ? 'conclusion-match' : 'conclusion-mismatch'">
-          <view class="conclusion-icon">{{ conclusion.isMatch ? '✓' : '×' }}</view>
+        <!-- 商业险上险查询：到期区间解构卡 + 车架号独立卡（key 组合识别，见 insurance computed） -->
+        <template v-if="insurance">
+          <view class="card block insurance-card">
+            <view class="block-title block-title-row">
+              <text class="block-title-text">商业险到期时间</text>
+              <view v-if="insuranceStatusText" class="ins-status" :class="'ins-' + insuranceStatusText.tone">{{ insuranceStatusText.text }}</view>
+            </view>
+            <view class="ins-main">{{ insuranceEnd.main }}</view>
+            <view class="ins-months" v-if="insuranceEnd.months">{{ insuranceEnd.months }}</view>
+          </view>
+          <view class="card block vin-card" v-if="insurance.vinItem">
+            <view class="block-title block-title-row">
+              <text class="block-title-text">车架号</text>
+              <view class="vin-copy" @click.stop="copyVin">复制</view>
+            </view>
+            <text class="vin-value" selectable>{{ formatVal(insurance.vinItem.value) }}</text>
+          </view>
+        </template>
+
+        <!-- 理赔定损报告：是否全损 / 重大事故类型 / 理赔金额区间专属卡（key 组合识别，见 claimReport computed） -->
+        <view class="card block claim-card" v-if="claimReport">
+          <view class="block-title"><text class="block-title-text">定损结论</text></view>
+          <view class="claim-status-row">
+            <view class="claim-status" v-if="claimReport.loss">
+              <text class="claim-status-label">是否全损</text>
+              <text class="claim-status-value" :class="claimLossTone">{{ claimReport.lossText }}</text>
+            </view>
+            <view class="claim-status" v-if="claimReport.accident">
+              <text class="claim-status-label">重大事故类型</text>
+              <text class="claim-status-value" :class="claimAccidentTone">{{ claimReport.accidentText }}</text>
+            </view>
+          </view>
+          <view class="claim-claims" v-if="claimReport.claimsText">
+            <text class="claim-status-label">理赔金额区间及次数</text>
+            <view class="claim-claims-main">{{ claimReport.claimsText.main }}</view>
+            <view class="claim-claims-count" v-if="claimReport.claimsText.countText">{{ claimReport.claimsText.countText }}</view>
+          </view>
+        </view>
+
+        <!-- 核验结论横幅（人车关系 / ETC 核验 / 人车核验 check_result） -->
+        <view class="conclusion card" v-if="conclusion" :class="conclusion.toneClass">
+          <view class="conclusion-icon">{{ conclusion.icon }}</view>
           <view class="conclusion-main">
             <view class="conclusion-label">{{ conclusion.label }}</view>
             <view class="conclusion-value">{{ conclusion.value }}</view>
@@ -146,6 +190,17 @@
           <view class="stat-card card" v-for="item in statCards" :key="item.key">
             <view class="stat-value">{{ item.value }}</view>
             <view class="stat-label">{{ item.label }}</view>
+          </view>
+        </view>
+
+        <!-- 车辆参数档案：decode_data 内层 标题:内容 对扁平化为参数网格 -->
+        <view class="card block" v-if="decodeCard">
+          <view class="block-title"><text class="block-title-text">{{ decodeCard.label }}</text></view>
+          <view class="field-grid">
+            <view class="field-cell" v-for="(d, i) in decodeCard.fields" :key="i">
+              <text class="field-label">{{ d.title }}</text>
+              <text class="field-value">{{ d.content }}</text>
+            </view>
           </view>
         </view>
 
@@ -289,7 +344,7 @@
         <!-- 重要提示 -->
         <view class="card block notice-block">
           <view class="notice-head"><view class="notice-dot" />重要提示</view>
-          <view class="notice-text">{{ isDemo ? '本页为报告示例，数据均为模拟生成，仅用于展示报告结构与内容。实际查询结果以付费查询返回为准。' : '查询结果仅在当前页面有效，退出后信息将自动销毁。如需再次查询，需重新付费。请务必自行保存查询结果。' }}</view>
+          <view class="notice-text">{{ noticeText }}</view>
         </view>
 
         <view class="disclaimer">数据仅供合法授权场景参考，不作为行政、司法或交易决策的唯一依据。请勿截图传播包含个人敏感信息的查询结果。</view>
@@ -313,8 +368,45 @@ const elapsed=ref(0)
 const loading=ref(true)
 const isQuerying=computed(()=>order.value.status==='querying')
 const isMissing=computed(()=>['query_failed','refunding','refunded'].includes(order.value.status)&&!order.value.result?.length)
-const isDestroyed=computed(()=>order.value.result_destroyed===true)
+// 一级查询结果自生成起保留 24 小时，到期后后端不再返回结果（旧接口字段 result_destroyed 一并兼容）
+const isExpired=computed(()=>order.value.result_expired===true||order.value.result_destroyed===true)
 const refundText=computed(()=>({requesting:'退款申请提交中',processing:'退款处理中',refunded:'退款已完成',failed:'退款暂未成功，系统将自动重试'})[order.value.refund_status]||'系统将自动发起退款')
+
+/* ===== 结果有效期展示：一级保留 24 小时、二级长期可看 ===== */
+const remainBase=ref(0)
+const remainLoadedAt=ref(0)
+const nowTick=ref(Date.now())
+let tickTimer=null
+watch(order,o=>{
+  remainBase.value=Number(o?.result_remaining_seconds||0)
+  remainLoadedAt.value=Date.now()
+  nowTick.value=Date.now()
+})
+const remainSeconds=computed(()=>{
+  if(order.value.result_retention!=='limited')return null
+  return Math.max(0,remainBase.value-Math.floor((nowTick.value-remainLoadedAt.value)/1000))
+})
+const retentionText=computed(()=>{
+  const o=order.value
+  if(isDemo.value||isExpired.value||o.status!=='success'||!o.result?.length)return ''
+  if(o.result_retention==='permanent')return '本报告长期有效，可随时在订单记录中再次查看'
+  if(o.result_retention==='limited'&&o.result_expires_at)return `结果保留至 ${o.result_expires_at}（剩余 ${durationText(remainSeconds.value)}）`
+  return ''
+})
+function durationText(sec){
+  const s=Math.max(0,Number(sec)||0)
+  if(s<=0)return '已到期'
+  if(s>=3600){
+    const h=Math.floor(s/3600),m=Math.floor((s%3600)/60)
+    return m>0?`${h} 小时 ${m} 分钟`:`${h} 小时`
+  }
+  return `${Math.max(1,Math.floor(s/60))} 分钟`
+}
+const noticeText=computed(()=>{
+  if(isDemo.value)return '本页为报告示例，数据均为模拟生成，仅用于展示报告结构与内容。实际查询结果以付费查询返回为准。'
+  if(order.value.result_retention==='permanent')return '本报告支持长期查看，可随时从订单记录再次进入。请勿截图传播包含个人敏感信息的查询结果。'
+  return '查询结果自生成时间起保留 24 小时，到期后需重新查询。请及时保存重要信息。'
+})
 
 /* ===== 示例报告（?demo=battery）：首页「查看报告示例」入口 =====
    模拟新能源电池业务（id=31 energy_create_order）的报告数据，结构与后端
@@ -382,20 +474,143 @@ function buildBatteryDemo(){
 function goDemoQuery(){uni.navigateTo({url:'/pages/query/query?code=energy_create_order'})}
 
 /* ===== 结果分区（专业权威展示） ===== */
-// 核验结论字段：state / status（后端已映射为 匹配/不匹配/查询成功无结果/一致/不一致）
-const CONCLUSION_KEYS = new Set(['state', 'status'])
-const STAT_KEYS = new Set(['mingxia_num', 'guohu_num'])
+// 核验结论字段：state / status（后端已映射为 匹配/不匹配/查询成功无结果）；check_result 人车核验（后端映射 一致/不一致/查无）
+const CONCLUSION_KEYS = new Set(['state', 'status', 'check_result'])
+// count：个人/企业名下车辆状况查询的查得车辆总数（全库仅这两个业务使用顶层 count，嵌套的 content.count 不受影响）
+const STAT_KEYS = new Set(['mingxia_num', 'guohu_num', 'count'])
 // 车辆档案头部字段
 const PROFILE_BADGE = { name: '车辆品牌', type: '车辆种类', usage: '使用性质' }
 
+/* ===== 商业险上险查询（end_date 业务）：到期区间解构 + 车架号独立卡 =====
+   识别：结果含 end_date key（当前仅该业务）；/checkout/status 不返回 service code，
+   用结果 key 组合识别。status/end_date/vin 三个 key 由下方专属卡消费，不再进核验横幅与字段网格。 */
+const insurance = computed(() => {
+  const items = order.value.result || []
+  const endItem = items.find(it => it.key === 'end_date')
+  if (!endItem) return null
+  return {
+    endItem,
+    statusItem: items.find(it => it.key === 'status'),
+    vinItem: items.find(it => it.key === 'vin'),
+    keys: new Set(['end_date', 'status', 'vin'])
+  }
+})
+/** 区间值解析：(120，150] / [1,2) 等，兼容全角逗号与开闭括号 */
+const INTERVAL_RE = /^[([]\s*(-?\d+(?:\.\d+)?)\s*[，,]\s*(-?\d+(?:\.\d+)?)\s*[)\]]$/
+const insuranceEnd = computed(() => {
+  const raw = String(insurance.value?.endItem?.value ?? '').trim()
+  const m = INTERVAL_RE.exec(raw)
+  if (!m) return { main: raw || '暂无数据', months: '' }
+  const low = Number(m[1]), high = Number(m[2])
+  const main = low === high ? `${low} 天` : `${low} ~ ${high} 天`
+  // 月换算：下限够一个月量级才展示，避免"约 0~1 个月"这类噪音
+  let months = ''
+  if (low >= 30) {
+    const ml = Math.round(low / 30), mh = Math.round(high / 30)
+    months = ml === mh ? `约 ${ml} 个月后到期` : `约 ${ml}~${mh} 个月后到期`
+  }
+  return { main, months }
+})
+/** 状态胶囊：此业务 status 0=查无结果(脱保) 1=查询成功（后端通用枚举会把 1 翻成"匹配"、0 翻成"未知"） */
+function insuranceStatus(value) {
+  const t = String(value ?? '').trim()
+  if (!t) return null
+  if (t.includes('无结果') || t.includes('脱保')) return { text: '查无结果（脱保）', tone: 'warn' }
+  if (t.includes('匹配') || t.includes('成功')) return { text: '查询成功', tone: 'ok' }
+  return { text: t, tone: 'plain' }
+}
+const insuranceStatusText = computed(() => {
+  const item = insurance.value?.statusItem
+  return item ? insuranceStatus(item.value) : null
+})
+function copyVin() {
+  const vin = String(insurance.value?.vinItem?.value ?? '').trim()
+  if (!vin) return
+  uni.setClipboardData({ data: vin, success: () => uni.showToast({ title: '已复制', icon: 'success' }) })
+}
+
+/* ===== 理赔定损报告（claim_assessment_report）：全损/事故/理赔区间专属卡 =====
+   识别：结果含 report.total_loss 或 report.major_accident 或 report.claims_data（全库仅该业务）。
+   后端 ResultValueFormatter 已翻译 total_loss/major_accident 枚举；claims_data 形如 (0,2000]:1 由前端解构。 */
+const CLAIM_LOSS_MAP = { 0: '否', 1: '是（推定全损）' }
+const CLAIM_ACCIDENT_MAP = { 0: '无大事故', 1: '碰撞', 2: '水淹', 3: '火烧', 4: '拆解' }
+/** 理赔区间+次数解析：(0,2000]:1 → 主文案 0 ~ 2000 元 + 次数；多段用 ; 分隔 */
+const CLAIM_SEG_RE = /^[([]\s*(-?\d+(?:\.\d+)?)\s*[，,]\s*(-?\d+(?:\.\d+)?)\s*[)\]]\s*[:：]\s*(\d+)$/
+function parseClaimsData(raw) {
+  const t = String(raw ?? '').trim()
+  if (!t) return null
+  const segs = t.split(/[;；]/).map(s => s.trim()).filter(Boolean)
+  const ranges = []
+  let total = 0
+  let parsed = 0
+  for (const seg of segs) {
+    const m = CLAIM_SEG_RE.exec(seg)
+    if (!m) continue
+    parsed++
+    const low = Number(m[1]), high = Number(m[2]), n = Number(m[3])
+    ranges.push(low === high ? `${low} 元` : `${low} ~ ${high} 元`)
+    total += n
+  }
+  if (!parsed) return { main: t, countText: '' }
+  return {
+    main: ranges.join('、'),
+    countText: total > 0 ? `共理赔 ${total} 次` : '无理赔记录'
+  }
+}
+function claimEnumText(value, map) {
+  const t = String(value ?? '').trim()
+  if (t in map) return map[t]
+  return t || '暂无数据'
+}
+const claimReport = computed(() => {
+  const items = order.value.result || []
+  const find = key => items.find(it => it.key === key)
+  const loss = find('report.total_loss')
+  const accident = find('report.major_accident')
+  const claims = find('report.claims_data')
+  if (!loss && !accident && !claims) return null
+  return {
+    loss,
+    accident,
+    claims,
+    lossText: loss ? claimEnumText(loss.value, CLAIM_LOSS_MAP) : '',
+    accidentText: accident ? claimEnumText(accident.value, CLAIM_ACCIDENT_MAP) : '',
+    claimsText: claims ? parseClaimsData(claims.value) : null,
+    keys: new Set(['report.total_loss', 'report.major_accident', 'report.claims_data'])
+  }
+})
+function claimLossTone(v) {
+  const t = String(v ?? '')
+  if (t.includes('是')) return 'claim-bad'
+  if (t.includes('否')) return 'claim-ok'
+  return 'claim-plain'
+}
+function claimAccidentTone(v) {
+  const t = String(v ?? '')
+  if (t.includes('无大事故')) return 'claim-ok'
+  if (!t || t === '暂无数据') return 'claim-plain'
+  return 'claim-bad'
+}
+
 const conclusion = computed(() => {
+  if (insurance.value) return null // 商业险上险查询的 status 由专属卡展示，不进核验横幅
   const item = (order.value.result || []).find(it => CONCLUSION_KEYS.has(it.key))
   if (!item || item.value === null || item.value === undefined || item.value === '') return null
   const text = String(item.value)
-  const isMatch = text.includes('匹配') || text.includes('一致')
-  const isNone = text.includes('无结果')
+  // 先判否定词：「不匹配/不一致」包含「匹配/一致」，顺序反了会把否定判成一致
+  const isNone = text.includes('无结果') || text.includes('查无')
+  const isMismatch = text.includes('不匹配') || text.includes('不一致')
+  const isMatch = !isNone && !isMismatch && (text.includes('匹配') || text.includes('一致'))
   const hint = isNone ? '本次核验未查询到可核验的数据' : (isMatch ? '核验一致，身份与车辆关系匹配' : '核验不一致，身份与车辆关系不匹配')
-  return { label: item.label, value: text, isMatch, hint }
+  // check_result 的 schema label 带枚举说明（如"核验结果 1.一致 2.不一致 3.查无"），横幅只留短标题
+  const label = item.key === 'check_result' ? '核验结果' : item.label
+  return {
+    label,
+    value: text,
+    hint,
+    icon: isNone ? '!' : (isMatch ? '✓' : '×'),
+    toneClass: isNone ? 'conclusion-none' : (isMatch ? 'conclusion-match' : 'conclusion-mismatch')
+  }
 })
 
 const statCards = computed(() => (order.value.result || []).filter(it => STAT_KEYS.has(it.key)))
@@ -497,11 +712,17 @@ const profile = computed(() => {
 })
 
 const fieldGroups = computed(() => {
-  const profileKeys = new Set(['name', 'name_info', 'vin', 'type', 'usage', ...STAT_KEYS, ...CONCLUSION_KEYS])
+  // 档案字段（vin/type/usage 等）只在档案头卡实际渲染（有 name）时才从网格隐藏；
+  // 无 name 的业务（如车牌查车架号仅返回 vin）不渲染头卡，字段必须留在网格里展示
+  const profileKeys = profile.value
+    ? new Set(['name', 'name_info', 'vin', 'type', 'usage', ...STAT_KEYS, ...CONCLUSION_KEYS])
+    : new Set([...STAT_KEYS, ...CONCLUSION_KEYS])
   const hiddenKeys = brandCard.value ? brandCard.value.usedKeys : new Set()
   return (order.value.result || []).filter(it => {
     if (profileKeys.has(it.key)) return false
     if (hiddenKeys.has(it.key)) return false
+    if (insurance.value?.keys.has(it.key)) return false // 商业险专属卡已展示
+    if (claimReport.value?.keys.has(it.key)) return false // 理赔定损专属卡已展示
     if (hasResultSuffix(it.key, SAFETY_KEY_SUFFIXES) || hasResultSuffix(it.key, ADVICE_KEY_SUFFIXES)) return false
     if (it.display === 'array' && Array.isArray(it.value)) return false
     if (isPlainObject(it.value)) return false
@@ -509,7 +730,29 @@ const fieldGroups = computed(() => {
     return true
   })
 })
-const arrayGroups = computed(() => (order.value.result || []).filter(it => it.display === 'array' && Array.isArray(it.value)))
+/* ===== 车辆参数档案（历史里程查询 decode_data）：内层 title:content 对扁平化为参数网格 =====
+   配置侧只配 "decode_data []"（不带子字段，子字段对嵌套数组不生效），后端整组原样输出；
+   这里跳过 image 提示图与 bgColor/hide 等噪音字段，仅取文本项的 标题:内容 对。 */
+const DECODE_KEY = 'decode_data[]'
+const decodeCard = computed(() => {
+  const g = (order.value.result || []).find(it => it.key === DECODE_KEY && Array.isArray(it.value))
+  if (!g) return null
+  const fields = []
+  for (const row of g.value) {
+    const list = Array.isArray(row?.list) ? row.list : []
+    for (const item of list) {
+      if (String(item?.type ?? 'text') !== 'text') continue // 仅文本项，跳过提示图等
+      const title = String(item?.title ?? '').trim()
+      const content = String(item?.content ?? '').trim()
+      if (!title || !content || content === '-') continue // 空值/占位符不展示
+      fields.push({ title, content })
+    }
+  }
+  if (!fields.length) return null
+  return { label: g.label || '车辆参数档案', fields }
+})
+// 参数档案走专属卡，从通用数组分区分流，避免渲染成噪音行
+const arrayGroups = computed(() => (order.value.result || []).filter(it => it.display === 'array' && Array.isArray(it.value) && it.key !== DECODE_KEY))
 const objectGroups = computed(() => (order.value.result || []).filter(it => !it.display && isPlainObject(it.value) && !STAT_KEYS.has(it.key)))
 
 /* ===== 方案A：数组子字段卡片的角色推断 ===== */
@@ -669,6 +912,8 @@ onLoad(async options=>{
     return
   }
   currentOrderNo=String(options.order_no||'')
+  // 有效期倒计时每 30 秒刷新一次显示
+  if(!tickTimer)tickTimer=setInterval(()=>{nowTick.value=Date.now()},30000)
   try{
     order.value=await checkoutRequest('/checkout/status',{orderNo:currentOrderNo})
     markViewedIfNeeded()
@@ -697,7 +942,7 @@ onPullDownRefresh(async()=>{
   uni.stopPullDownRefresh()
 })
 
-onUnmounted(()=>{stopPolling()})
+onUnmounted(()=>{stopPolling();if(tickTimer){clearInterval(tickTimer);tickTimer=null}})
 
 function startPolling(){
   stopPolling()
@@ -742,7 +987,7 @@ async function reloadOrder(){
 function markViewedIfNeeded(){
   if(isDemo.value)return
   const o=order.value
-  if(o.status==='success'&&!o.result_destroyed&&o.result?.length){
+  if(o.status==='success'&&!isExpired.value&&o.result?.length){
     checkoutRequest('/checkout/mark-viewed',{method:'POST',orderNo:o.order_no,data:{order_no:o.order_no}}).catch(()=>{})
   }
 }
@@ -818,6 +1063,8 @@ function cellText(v){
 .banner-title{ font-size:36rpx; font-weight:700; color:#1F2937; }
 .banner-sub{ font-size:23rpx; color:#6B7280; margin-top:8rpx; line-height:1.6; }
 .banner-extra{ font-size:22rpx; color:#2E7DFF; background:#E0EEFF; padding:8rpx 20rpx; border-radius:24rpx; }
+.retention-tip{ display:flex; align-items:center; gap:8rpx; margin:-10rpx 0 26rpx; padding:12rpx 22rpx; border-radius:14rpx; background:#F2F7FE; color:#5B7FA8; font-size:21rpx; line-height:1.5; }
+.retention-icon{ flex:none; color:#2E7DFF; font-size:24rpx; }
 .banner-action{ height:68rpx; line-height:68rpx; margin:18rpx 0 0; padding:0 34rpx; border-radius:34rpx; background:#2E7DFF; color:#fff; font-size:24rpx; font-weight:600; width:100%; box-shadow:0 8rpx 18rpx rgba(46,125,255,.26); }
 .spinner{ border:6rpx solid #BBD6FF; border-top-color:#2E7DFF; border-radius:50%; width:42rpx; height:42rpx; margin:10rpx; animation:rotate 1s linear infinite; }
 @keyframes rotate{ to{ transform:rotate(360deg); } }
@@ -851,7 +1098,33 @@ function cellText(v){
 .conclusion-value{ font-size:46rpx; font-weight:700; margin-top:6rpx; letter-spacing:2rpx; }
 .conclusion-match .conclusion-value{ color:#0B7A56; }
 .conclusion-mismatch .conclusion-value{ color:#B91C1C; }
+/* 查无结果：中性琥珀色，区别于"不一致"的红色误判 */
+.conclusion-none{ background:#FDEFD8; border:1rpx solid #F5D9A8; }
+.conclusion-none .conclusion-icon{ background:#F59E0B; }
+.conclusion-none .conclusion-value{ color:#B45309; }
 .conclusion-hint{ font-size:22rpx; color:#6B7280; margin-top:10rpx; line-height:1.6; }
+
+/* ===== 商业险上险查询：到期区间卡 + 车架号卡 ===== */
+.ins-status{ flex:none; padding:6rpx 20rpx; border-radius:20rpx; font-size:21rpx; font-weight:700; }
+.ins-ok{ background:#E8F8F1; color:#0B7A56; border:1rpx solid #B8E6D0; }
+.ins-warn{ background:#FDEFD8; color:#B45309; border:1rpx solid #F5D9A8; }
+.ins-plain{ background:#F5F7FA; color:#6B7280; border:1rpx solid #EEF1F5; }
+.ins-main{ text-align:center; font-size:64rpx; font-weight:800; color:#1F2937; letter-spacing:2rpx; line-height:1.3; margin-top:14rpx; }
+.ins-months{ text-align:center; font-size:26rpx; font-weight:600; color:#2E7DFF; margin-top:10rpx; }
+.vin-value{ display:block; font-size:36rpx; font-weight:700; color:#1F2937; letter-spacing:2rpx; word-break:break-all; margin-top:8rpx; }
+.vin-copy{ flex:none; font-size:21rpx; font-weight:600; color:#2E7DFF; background:#E0EEFF; padding:6rpx 20rpx; border-radius:22rpx; }
+
+/* ===== 理赔定损报告：定损结论卡 ===== */
+.claim-status-row{ display:flex; gap:20rpx; margin-top:6rpx; }
+.claim-status{ flex:1; background:#F5F7FA; border-radius:16rpx; padding:22rpx 20rpx; text-align:center; }
+.claim-status-label{ display:block; font-size:20rpx; color:#9CA3AF; }
+.claim-status-value{ display:block; font-size:32rpx; font-weight:700; margin-top:10rpx; line-height:1.4; word-break:break-all; }
+.claim-ok{ color:#0B7A56; }
+.claim-bad{ color:#DC2626; }
+.claim-plain{ color:#6B7280; }
+.claim-claims{ margin-top:20rpx; background:#F5F7FA; border-radius:16rpx; padding:22rpx 20rpx; text-align:center; }
+.claim-claims-main{ font-size:44rpx; font-weight:800; color:#1F2937; margin-top:10rpx; letter-spacing:1rpx; }
+.claim-claims-count{ font-size:24rpx; font-weight:600; color:#2E7DFF; margin-top:8rpx; }
 
 /* ===== 车辆档案头部 ===== */
 .profile-head{ padding:34rpx 30rpx; margin-bottom:26rpx; }
