@@ -11,6 +11,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderServiceTest {
     private final ProviderService provider = new ProviderService(null, new ObjectMapper(), null, "");
@@ -67,6 +68,127 @@ class ProviderServiceTest {
         // 幂等：已翻译文本原样返回
         assertEquals("否", ResultValueFormatter.format("report.total_loss", "否"));
         assertEquals("拆解", ResultValueFormatter.format("report.major_accident", "拆解"));
+    }
+
+    /** 回调双层嵌套：外层元数据（vin/result_status）+ 内层 result 报告体拍平后字段齐全（维保回调修复） */
+    @Test
+    void flattenReportMergesNestedResultWithOuterMetadata() {
+        Map<String, Object> nested = Map.of(
+                "query_id", "q-123",
+                "vin", "LE4WG4CB3JL356477",
+                "result_status", 1,
+                "result", Map.of("car_is_fire", 0, "content", java.util.List.of(Map.of("maintain_type", "小保养"))));
+
+        Map<String, Object> flat = ProviderService.flattenReport(nested);
+
+        assertEquals("q-123", flat.get("query_id"));
+        assertEquals("LE4WG4CB3JL356477", flat.get("vin"));
+        assertEquals(1, flat.get("result_status"));
+        assertEquals(0, flat.get("car_is_fire"));
+        // result 键必须保留：新能源车信息查询的 schema 走 result.vin 这类嵌套路径
+        assertTrue(flat.containsKey("result"));
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> content = (java.util.List<Map<String, Object>>) flat.get("content");
+        assertEquals("小保养", content.getFirst().get("maintain_type"));
+    }
+
+    /** 回调内层再嵌一层 result（新能源车信息查询）：result.xxx 路径必须仍能取到值 */
+    @Test
+    void flattenReportKeepsNestedResultPathResolvable() throws Exception {
+        String schema = "{\"order_id\":\"订单号\",\"result.vin\":\"车架号\",\"result.brand\":\"品牌\"}";
+        Map<String, Object> service = Map.of("result_schema", schema);
+        Map<String, Object> callbackResult = new java.util.LinkedHashMap<>();
+        callbackResult.put("order_id", "ORD20261028230329423254677");
+        callbackResult.put("vin", "LVG8M51K2FG508778");
+        callbackResult.put("query_status", 3);
+        callbackResult.put("result", Map.of("vin", "LE4WG4CB3JL356477", "brand", "比亚迪"));
+
+        Map<String, Object> flat = ProviderService.flattenReport(callbackResult);
+
+        assertEquals("LE4WG4CB3JL356477", ((Map<?, ?>) flat.get("result")).get("vin"));
+        assertEquals("比亚迪", flat.get("brand"), "内层报告字段应提升到顶层");
+        java.util.List<Map<String, Object>> out = provider.normalize(service, flat);
+        assertEquals("ORD20261028230329423254677", out.stream().filter(m -> "order_id".equals(m.get("key"))).findFirst().orElseThrow().get("value"));
+        assertEquals("LE4WG4CB3JL356477", out.stream().filter(m -> "result.vin".equals(m.get("key"))).findFirst().orElseThrow().get("value"));
+        assertEquals("比亚迪", out.stream().filter(m -> "result.brand".equals(m.get("key"))).findFirst().orElseThrow().get("value"));
+    }
+
+    /** 官方平铺结构（无嵌套 result）原样返回，兼容 history_order 等接口 */
+    @Test
+    void flattenReportKeepsFlatStructureUntouched() {
+        Map<String, Object> flatIn = Map.of("result_status", 1, "vin", "LSVAF49B7SN123456", "car_is_fire", 2);
+        assertEquals(flatIn, ProviderService.flattenReport(flatIn));
+    }
+
+    /** fetchReport 扁平 *_is_repair 补出官方 *_repair_detail.is_repair（回调通路兼容） */
+    @Test
+    void flattenReportSynthesizesRepairDetailFromFlatFlags() {
+        Map<String, Object> callback = Map.of(
+                "vin", "LE4WG4CB3JL356477",
+                "structure_is_repair", 0,
+                "appearance_is_repair", 1,
+                "important_parts_is_repair", 0);
+
+        Map<String, Object> flat = ProviderService.flattenReport(callback);
+
+        assertEquals("LE4WG4CB3JL356477", flat.get("vin"));
+        assertEquals(0, ((Map<?, ?>) flat.get("structure_repair_detail")).get("is_repair"));
+        assertEquals(1, ((Map<?, ?>) flat.get("appearance_repair_detail")).get("is_repair"));
+        assertEquals(0, ((Map<?, ?>) flat.get("important_parts_repair_detail")).get("is_repair"));
+        // 原入参不被修改
+        assertFalse(callback.containsKey("structure_repair_detail"));
+    }
+
+    /** getDetailV2 已有嵌套 *_repair_detail 时不被扁平键覆盖（嵌套数据更完整） */
+    @Test
+    void flattenReportKeepsExistingRepairDetailOverFlatFlags() {
+        Map<String, Object> official = Map.of(
+                "structure_is_repair", 1,
+                "structure_repair_detail", Map.of("is_repair", 0, "have_detail", java.util.List.of(Map.of("name", "梁"))));
+
+        Map<String, Object> flat = ProviderService.flattenReport(official);
+
+        assertEquals(0, ((Map<?, ?>) flat.get("structure_repair_detail")).get("is_repair"));
+        assertEquals(1, ((java.util.List<?>) ((Map<?, ?>) flat.get("structure_repair_detail")).get("have_detail")).size());
+    }
+
+    /** 双层嵌套回调 + 扁平标志：拍平与结构补全同时生效，normalize 走官方嵌套路径取值 */
+    @Test
+    void normalizeAfterFlattenResolvesSynthesizedIsRepair() throws Exception {
+        String schema = "{\"structure_repair_detail.is_repair\":\"结构部件是否维修\","
+                + "\"appearance_repair_detail.is_repair\":\"外观部件是否维修\","
+                + "\"important_parts_repair_detail.is_repair\":\"重要部件是否维修\"}";
+        Map<String, Object> service = Map.of("result_schema", schema);
+        Map<String, Object> nested = Map.of(
+                "vin", "LE4WG4CB3JL356477",
+                "result", Map.of("structure_is_repair", 0, "appearance_is_repair", 1, "important_parts_is_repair", 0));
+
+        java.util.List<Map<String, Object>> out = provider.normalize(service, ProviderService.flattenReport(nested));
+
+        assertEquals("无", out.stream().filter(m -> "structure_repair_detail.is_repair".equals(m.get("key"))).findFirst().orElseThrow().get("value"));
+        assertEquals("有", out.stream().filter(m -> "appearance_repair_detail.is_repair".equals(m.get("key"))).findFirst().orElseThrow().get("value"));
+        assertEquals("无", out.stream().filter(m -> "important_parts_repair_detail.is_repair".equals(m.get("key"))).findFirst().orElseThrow().get("value"));
+    }
+
+    /** 拍平后 normalize 能同时取到外层车架号与内层报告字段（此前 26/30 暂无数据的根因） */
+    @Test
+    void normalizeAfterFlattenResolvesNestedReportFields() throws Exception {
+        String schema = "{\"vin\":\"车架号\",\"result_status\":\"查询状态\",\"car_is_fire\":\"是否火烧\",\"content[].maintain_type\":\"维保类型\"}";
+        Map<String, Object> service = Map.of("result_schema", schema);
+        Map<String, Object> nested = Map.of(
+                "vin", "LE4WG4CB3JL356477",
+                "result_status", 1,
+                "result", Map.of("car_is_fire", 0, "content", java.util.List.of(Map.of("maintain_type", "小保养"))));
+
+        java.util.List<Map<String, Object>> out = provider.normalize(service, ProviderService.flattenReport(nested));
+
+        assertEquals("LE4WG4CB3JL356477", out.stream().filter(m -> "vin".equals(m.get("key"))).findFirst().orElseThrow().get("value"));
+        assertEquals("查询成功", out.stream().filter(m -> "result_status".equals(m.get("key"))).findFirst().orElseThrow().get("value"));
+        assertEquals("否", out.stream().filter(m -> "car_is_fire".equals(m.get("key"))).findFirst().orElseThrow().get("value"));
+        Map<String, Object> group = out.stream().filter(m -> "content[]".equals(m.get("key"))).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> rows = (java.util.List<Map<String, Object>>) group.get("value");
+        assertEquals("小保养", rows.getFirst().get("maintain_type"));
     }
 
     @Test

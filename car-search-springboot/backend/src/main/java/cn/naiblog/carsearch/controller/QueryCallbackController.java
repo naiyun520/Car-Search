@@ -4,8 +4,10 @@ import cn.naiblog.carsearch.api.ApiResponse;
 import cn.naiblog.carsearch.api.ApiSupport;
 import cn.naiblog.carsearch.api.BusinessException;
 import cn.naiblog.carsearch.security.CryptoService;
+import cn.naiblog.carsearch.service.EmailNotificationService;
 import cn.naiblog.carsearch.service.PaymentDeliveryService;
 import cn.naiblog.carsearch.service.ProviderService;
+import cn.naiblog.carsearch.service.QueryStatusResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,7 +18,6 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * 查询回调控制器
@@ -30,16 +31,18 @@ public class QueryCallbackController {
     private final ProviderService providerService;
     private final CryptoService crypto;
     private final PaymentDeliveryService delivery;
+    private final EmailNotificationService email;
     private final ObjectMapper mapper;
     private final ApiSupport api;
 
     public QueryCallbackController(JdbcTemplate jdbc, ProviderService providerService,
                                    CryptoService crypto, PaymentDeliveryService delivery,
-                                   ObjectMapper mapper, ApiSupport api) {
+                                   EmailNotificationService email, ObjectMapper mapper, ApiSupport api) {
         this.jdbc = jdbc;
         this.providerService = providerService;
         this.crypto = crypto;
         this.delivery = delivery;
+        this.email = email;
         this.mapper = mapper;
         this.api = api;
     }
@@ -146,27 +149,17 @@ public class QueryCallbackController {
                 resultCode = String.valueOf(body.getOrDefault("number", body.getOrDefault("code", "")));
                 resultMessage = String.valueOf(body.getOrDefault("message", ""));
 
-                // 检查是否有嵌套的 result 状态
+                // 检查是否有嵌套的 result 状态（三套枚举按字段名区分，见 QueryStatusResolver）
                 if (body.get("result") instanceof Map) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> result = (Map<String, Object>) body.get("result");
-                    String queryStatus = String.valueOf(result.getOrDefault("query_status",
-                            result.getOrDefault("result_status", "")));
-                    // query_status: 3=查询成功, 7=查询失败
-                    if ("7".equals(queryStatus)) {
-                        status = "failed";
+                    QueryStatusResolver state = QueryStatusResolver.resolve(result);
+                    if (state == QueryStatusResolver.RUNNING) {
+                        log.info("[Callback] 供应商仍在查询中，等待最终回调 queryId={}", queryId);
+                        return Map.of("code", 0, "message", "success");
                     }
-                    // order_status: 0=查询中, 1=查询成功, 2=查询失败（部分供应商使用此字段）
-                    if (queryStatus.isBlank()) {
-                        Object orderStatus = result.get("order_status");
-                        if (orderStatus != null) {
-                            String os = String.valueOf(orderStatus).trim();
-                            if ("0".equals(os)) {
-                                log.info("[Callback] 供应商仍在查询中 order_status=0，等待最终回调 queryId={}", queryId);
-                                return Map.of("code", 0, "message", "success");
-                            }
-                            if ("2".equals(os)) status = "failed";
-                        }
+                    if (state == QueryStatusResolver.FAILED) {
+                        status = "failed";
                     }
                     // 也检查内层 result.status: 1=查询中, 2=查询成功, 3=查询失败
                     if (result.get("result") instanceof Map) {
@@ -201,12 +194,15 @@ public class QueryCallbackController {
             if ("completed".equals(status) && body != null) {
                 updateOrderFromCallback(serviceId, queryId, body, resultCode);
             } else if ("failed".equals(status)) {
-                // 回调返回失败，更新订单为 query_failed
+                // 回调返回失败，更新订单为 query_failed（同步失败会写 query_last_error，此处对齐，便于客服排查）
+                String reason = resultMessage.isBlank() ? "供应商返回查询失败" : resultMessage;
                 int failedOrders = jdbc.update(
-                        "update ci_order set status='query_failed', updated_at=? where provider_request_id=? and status='querying'",
+                        "update ci_order set status='query_failed', query_last_error=?, queried_at=?, updated_at=? where provider_request_id=? and status='querying'",
+                        reason.length() > 200 ? reason.substring(0, 200) : reason, LocalDateTime.now(),
                         LocalDateTime.now(), queryId);
                 if (failedOrders > 0) {
                     log.info("[Callback] 回调返回失败，已更新 {} 个订单为 query_failed queryId={}", failedOrders, queryId);
+                    notifyQueryFailed(queryId, "query_failed", reason);
                 }
             }
         } else {
@@ -243,6 +239,9 @@ public class QueryCallbackController {
 
         Map<String, Object> row = rows.getFirst();
         String status = String.valueOf(row.getOrDefault("status", "unknown"));
+        // 已上线小程序只识别 completed/failed 两种终态：调度器判超时(timeout)后对外映射为 failed，
+        // 否则旧版前端会永远停在"查询中"不停轮询（前端无法发版，只能在后端做状态翻译）
+        if ("timeout".equals(status)) status = "failed";
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("code", 0); // 兼容旧版小程序：request() 解包 data 后仍读取 code===0
@@ -258,56 +257,10 @@ public class QueryCallbackController {
             response.put("completed_at", row.get("callback_received_at"));
         }
 
-        // 如果是 pending/processing 且超过超时时间，触发降级轮询
-        if ("pending".equals(status) || "processing".equals(status)) {
-            int serviceId = ((Number) row.get("service_id")).intValue();
-            List<Map<String, Object>> services = jdbc.queryForList(
-                    "select callback_timeout_sec from ci_service where id=?", serviceId);
-
-            int timeoutSec = services.isEmpty() ? 120 : ((Number) services.getFirst()
-                    .getOrDefault("callback_timeout_sec", 120)).intValue();
-
-            LocalDateTime createdAt = (LocalDateTime) row.get("created_at");
-            if (createdAt != null && createdAt.plusSeconds(timeoutSec).isBefore(LocalDateTime.now())) {
-                // 超时，触发降级轮询
-                log.info("[QueryStatus] 查询超时，触发降级轮询 queryId={}, serviceId={}", queryId, serviceId);
-                triggerFallbackPoll(row, serviceId);
-                response.put("status", "processing");
-                response.put("fallback", true);
-            }
-        }
+        // 回调-only 模式：不再触发任何主动轮询（供应商获取报告接口按次计费）。
+        // 回调超时未到达的查询由 MaintenanceScheduler.failStaleQueries 兜底判失败（不调用供应商接口）。
 
         return ApiResponse.ok(response);
-    }
-
-    /**
-     * 触发降级轮询：调用供应商获取报告接口
-     */
-    private void triggerFallbackPoll(Map<String, Object> queryRow, int serviceId) {
-        try {
-            String queryId = String.valueOf(queryRow.get("query_id"));
-            // 标记降级时间
-            jdbc.update("update ci_query set fallback_at=?, status='processing', updated_at=? where id=?",
-                    LocalDateTime.now(), LocalDateTime.now(), queryRow.get("id"));
-
-            // 异步执行降级轮询（在新线程中执行，避免阻塞请求）
-            CompletableFuture.runAsync(() -> {
-                try {
-                    providerService.pollForResult(serviceId, queryId);
-                    // 降级轮询成功，更新订单状态
-                    updateOrderFromFallback(serviceId, queryId);
-                } catch (Exception e) {
-                    log.error("[Fallback] 降级轮询失败 queryId={}, error={}", queryId, e.getMessage(), e);
-                    jdbc.update("update ci_query set status='failed', result_message=?, completed_at=?, updated_at=? where query_id=?",
-                            "降级轮询失败: " + e.getMessage(), LocalDateTime.now(), LocalDateTime.now(), queryId);
-                    // 降级轮询也失败，更新订单为 query_failed
-                    jdbc.update("update ci_order set status='query_failed', updated_at=? where provider_request_id=? and status='querying'",
-                            LocalDateTime.now(), queryId);
-                }
-            });
-        } catch (Exception e) {
-            log.error("[Fallback] 触发降级轮询异常", e);
-        }
     }
 
     /**
@@ -338,6 +291,8 @@ public class QueryCallbackController {
             } else {
                 resultData = body;
             }
+            // 报告体可能再嵌一层 result（如 CarMaintain/fetchReport），拍平后再 normalize
+            resultData = ProviderService.flattenReport(resultData);
 
             // normalize 数据
             List<Map<String, Object>> normalized = providerService.normalize(service, resultData);
@@ -357,24 +312,18 @@ public class QueryCallbackController {
     }
 
     /**
-     * 降级轮询成功后，从 ci_query.result_json 解析数据并更新订单
+     * 异步/回调链路查询失败后补发邮件通知（与同步链路 QueryRunnerService 的 email.queryFailed 对齐）。
+     * 通知本身失败不影响业务状态，只记日志。
      */
-    private void updateOrderFromFallback(int serviceId, String queryId) {
+    private void notifyQueryFailed(String queryId, String providerCode, String reason) {
         try {
-            // 从 ci_query 读取降级轮询的结果
-            List<Map<String, Object>> queries = jdbc.queryForList(
-                    "select result_json from ci_query where query_id=? and status='completed'", queryId);
-            if (queries.isEmpty()) {
-                log.warn("[Fallback] 未找到已完成的查询记录 queryId={}", queryId);
-                return;
+            List<Map<String, Object>> orders = jdbc.queryForList(
+                    "select id from ci_order where provider_request_id=? and status='query_failed'", queryId);
+            for (Map<String, Object> order : orders) {
+                email.queryFailed(order.get("id"), providerCode, queryId, reason);
             }
-            String resultJson = String.valueOf(queries.getFirst().getOrDefault("result_json", "{}"));
-            Map<String, Object> body = mapper.readValue(resultJson, new tools.jackson.core.type.TypeReference<Map<String, Object>>() {});
-
-            // 复用回调更新逻辑
-            updateOrderFromCallback(serviceId, queryId, body, "200");
         } catch (Exception e) {
-            log.error("[Fallback] 更新订单失败 queryId={}", queryId, e);
+            log.warn("[Callback] 查询失败邮件通知入队异常 queryId={}, error={}", queryId, e.getMessage());
         }
     }
 

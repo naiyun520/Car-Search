@@ -233,120 +233,6 @@ public class ProviderService {
         return baseUrl+"/api/callback/provider/"+serviceId;
     }
 
-    /** 降级轮询：当回调超时后，主动轮询供应商获取结果 */
-    public void pollForResult(int serviceId,String queryId)throws Exception{
-        log.info("[Fallback] 开始降级轮询 serviceId={}, queryId={}", serviceId, queryId);
-
-        List<Map<String,Object>> services=jdbc.queryForList("select * from ci_service where id=?",serviceId);
-        if(services.isEmpty())throw new IllegalStateException("服务不存在");
-        Map<String,Object> service=services.getFirst();
-
-        int providerId=service.get("provider_api_id")instanceof Number n?n.intValue():0;
-        if(providerId<=0)throw new IllegalStateException("服务未配置供应商");
-
-        List<Map<String,Object>> providers=jdbc.queryForList("select * from ci_provider where id=? and status=1",providerId);
-        if(providers.isEmpty())throw new IllegalStateException("供应商不存在或已禁用");
-        Map<String,Object> provider=providers.getFirst();
-
-        String baseUrl=String.valueOf(provider.get("base_url")).trim();
-        String fetchApiPath=String.valueOf(service.getOrDefault("fetch_api_path","")).trim();
-        if(fetchApiPath.isBlank())throw new IllegalStateException("获取报告接口路径未配置");
-
-        boolean allowHttp=provider.get("allow_http")instanceof Number n&&n.intValue()==1;
-        String fetchUrl=buildFullUrl(baseUrl,fetchApiPath);
-        URI fetchUri=new URI(fetchUrl);
-        if(!allowHttp)assertPublicHttps(fetchUri);
-
-        String serviceVersion=String.valueOf(service.getOrDefault("api_version","")).trim();
-        String fetchVersion=String.valueOf(service.getOrDefault("fetch_api_version","")).trim();
-        if(fetchVersion.isBlank())fetchVersion=serviceVersion; // 回退到 api_version
-        // 报告接口的查询ID参数名可配置，默认 query_id，部分供应商使用 order_id
-        String paramName=String.valueOf(service.getOrDefault("fetch_api_param_name","query_id")).trim();
-        if(paramName.isBlank())paramName="query_id";
-        int pollInterval=service.get("poll_interval_sec")instanceof Number n?Math.max(2,n.intValue()):5;
-        int pollTimeout=service.get("poll_timeout_sec")instanceof Number n?Math.max(10,n.intValue()):120;
-        long deadline=System.currentTimeMillis()+pollTimeout*1000L;
-
-        int pollCount=0;
-        while(System.currentTimeMillis()<deadline){
-            pollCount++;
-            Map<String,String>fetchParams=buildSignedParams(provider,Map.of(paramName,queryId),fetchVersion);
-            log.info("[Fallback] 轮询 pollCount={}, url={}, params={}, version={}", pollCount, fetchUri, fetchParams, fetchVersion);
-
-            HttpRequest.Builder fetchBuilder=HttpRequest.newBuilder().uri(fetchUri).timeout(Duration.ofSeconds(20))
-                    .header("Accept","application/json").header("User-Agent","CarInquiry/2.0")
-                    .header("Content-Type","application/x-www-form-urlencoded")
-                    .POST(HttpRequest.BodyPublishers.ofString(form(fetchParams)));
-
-            HttpResponse<byte[]> fetchResponse=http.send(fetchBuilder.build(),HttpResponse.BodyHandlers.ofByteArray());
-            if(fetchResponse.statusCode()!=200)throw new IllegalStateException("获取报告接口 HTTP 状态异常："+fetchResponse.statusCode());
-
-            String fetchBody=new String(fetchResponse.body(),StandardCharsets.UTF_8);
-            log.info("[Fallback] 轮询响应 pollCount={}, body={}", pollCount, fetchBody);
-            Map<String,Object> fetchPayload=mapper.readValue(fetchResponse.body(),new TypeReference<LinkedHashMap<String,Object>>(){});
-            String fetchNumber=String.valueOf(fetchPayload.getOrDefault("number",""));
-
-            if(!"200".equals(fetchNumber)){
-                String msg=truncate(String.valueOf(fetchPayload.getOrDefault("message","")),160);
-                throw new ProviderQueryException("获取报告失败"+(msg.isBlank()?"":"："+msg),fetchNumber,"");
-            }
-
-            // 检查查询状态
-            Object fetchResult=fetchPayload.get("result");
-            if(fetchResult instanceof Map){
-                @SuppressWarnings("unchecked")Map<String,Object> fr=(Map<String,Object>)fetchResult;
-                String statusField="";
-                String statusValue="";
-                for(String key:new String[]{"query_status","result_status","order_status"}){
-                    String val=String.valueOf(fr.getOrDefault(key,"")).trim();
-                    if(!val.isBlank()){statusField=key;statusValue=val;break;}
-                }
-
-                boolean isSuccess;
-                boolean isFailed;
-                if("order_status".equals(statusField)){
-                    // order_status: 0=查询中, 1=查询成功, 2=查询失败
-                    isSuccess="1".equals(statusValue);
-                    isFailed="2".equals(statusValue);
-                }else if("result_status".equals(statusField)){
-                    isSuccess="1".equals(statusValue);
-                    isFailed="3".equals(statusValue);
-                }else{
-                    isSuccess="3".equals(statusValue);
-                    isFailed="7".equals(statusValue);
-                }
-
-                if(isSuccess){
-                    // 成功：更新查询记录
-                    jdbc.update(
-                            "update ci_query set status='completed', result_json=?, result_code='200', " +
-                                    "result_message='降级轮询成功', completed_at=?, updated_at=? where query_id=? and status in ('pending','processing')",
-                            fetchBody,LocalDateTime.now(),LocalDateTime.now(),queryId);
-                    log.info("[Fallback] 降级轮询成功 queryId={}", queryId);
-                    return;
-                }
-
-                if(isFailed){
-                    String statusText=String.valueOf(fr.getOrDefault("query_status_text",fr.getOrDefault("result_status_text","查询失败")));
-                    jdbc.update(
-                            "update ci_query set status='failed', result_code='query_failed', " +
-                                    "result_message=?, completed_at=?, updated_at=? where query_id=? and status in ('pending','processing')",
-                            statusText,LocalDateTime.now(),LocalDateTime.now(),queryId);
-                    throw new ProviderQueryException(statusText,"query_failed",queryId);
-                }
-            }
-
-            Thread.sleep(pollInterval*1000L);
-        }
-
-        // 超时
-        jdbc.update(
-                "update ci_query set status='timeout', result_code='timeout', " +
-                        "result_message='查询超时', completed_at=?, updated_at=? where query_id=? and status in ('pending','processing')",
-                LocalDateTime.now(),LocalDateTime.now(),queryId);
-        throw new ProviderQueryException("查询超时，请稍后重试","timeout",queryId);
-    }
-
     private String toJson(Object obj){
         try{return mapper.writeValueAsString(obj);}catch(Exception e){return "{}";}
     }
@@ -473,12 +359,9 @@ public class ProviderService {
                 }
 
                 if(isSuccess){
-                    Object reportData=fr.get("result");
                     // 兼容两种报告结构：部分供应商在 result 里再嵌一层 result（旧结构）；
-                    // 官方文档为平铺结构——result 即报告本身，result_status 与报告字段同级
-                    if(!(reportData instanceof Map))reportData=fr;
-                    @SuppressWarnings("unchecked")Map<String,Object> report=(Map<String,Object>)reportData;
-                    return new Result(successValue,queryId,normalize(service,report));
+                    // 官方文档为平铺结构——拍平后外层元数据（vin/result_status）与内层报告体合并
+                    return new Result(successValue,queryId,normalize(service,flattenReport(fr)));
                 }
 
                 if(isFailed){
@@ -685,6 +568,52 @@ public class ProviderService {
         log.debug("[Path] 提取结果={}", value);
         return value;
     }
+    /** fetchReport 扁平维修标志 → 官方 *_repair_detail 嵌套结构（键对：扁平键, 嵌套键） */
+    private static final String[][] REPAIR_DETAIL_COMPAT={
+            {"structure_is_repair","structure_repair_detail"},
+            {"appearance_is_repair","appearance_repair_detail"},
+            {"important_parts_is_repair","important_parts_repair_detail"},
+    };
+
+    /**
+     * 拍平回调/轮询报告结构：外层元数据（query_id/vin/result_status 等）与内层 result 报告体合并，
+     * 内层字段提升到顶层，同时**保留原始 result 键**——部分服务（如新能源车信息查询）的
+     * schema 按 {@code result.vin} 这类嵌套路径取值，删掉 result 会让整份报告变“暂无数据”。
+     * 无嵌套 result（官方平铺结构）时原样返回，兼容 history_order 等平铺接口。
+     * 另做 CarMaintain/fetchReport ↔ getDetailV2 结构兼容：扁平 *_is_repair 补出
+     * 官方 *_repair_detail.is_repair（嵌套已存在时不覆盖，见 compatRepairDetail）。
+     */
+    public static Map<String,Object> flattenReport(Map<String,Object> data){
+        if(data==null)return Map.of();
+        if(!(data.get("result")instanceof Map<?,?>inner))return compatRepairDetail(data);
+        Map<String,Object> flat=new LinkedHashMap<>(data);
+        // 内层报告字段覆盖同名外层回显字段（与外层 result 直接取报告体的旧行为一致）
+        for(var e:inner.entrySet()){
+            flat.put(String.valueOf(e.getKey()),e.getValue());
+        }
+        return compatRepairDetail(flat);
+    }
+
+    /**
+     * fetchReport 回调只回扁平 structure_is_repair/appearance_is_repair/important_parts_is_repair，
+     * getDetailV2 回嵌套 *_repair_detail{is_repair,have_detail,...}。schema 按官方嵌套路径配置，
+     * 此处仅在嵌套键缺失时用扁平值补出 {is_repair}，保证两条通路同一 schema 都能取到值。
+     */
+    private static Map<String,Object> compatRepairDetail(Map<String,Object> flat){
+        boolean need=false;
+        for(var pair:REPAIR_DETAIL_COMPAT){
+            if(flat.get(pair[0])!=null&&flat.get(pair[1])==null){need=true;break;}
+        }
+        if(!need)return flat;
+        Map<String,Object> out=new LinkedHashMap<>(flat);
+        for(var pair:REPAIR_DETAIL_COMPAT){
+            if(out.get(pair[0])!=null&&out.get(pair[1])==null){
+                out.put(pair[1],Map.of("is_repair",out.get(pair[0])));
+            }
+        }
+        return out;
+    }
+
     public List<Map<String,Object>> normalize(Map<String,Object> service,Map<String,Object> data)throws Exception{
         String schemaJson=String.valueOf(service.get("result_schema"));
         log.info("[Normalize] result_schema={}", schemaJson);
