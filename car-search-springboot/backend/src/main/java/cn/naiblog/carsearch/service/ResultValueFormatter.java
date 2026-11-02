@@ -12,6 +12,21 @@ import java.util.Map;
 public final class ResultValueFormatter {
     private ResultValueFormatter() { }
 
+    /** 同名状态字段在不同服务中含义不同，专属映射必须限定服务和完整字段路径。 */
+    public static Object format(String serviceCode, String key, Object value) {
+        if ("end_date".equals(serviceCode) && "status".equals(key)) {
+            if (value == null) return null;
+            String code = String.valueOf(value).trim();
+            return switch (code) {
+                case "0" -> "脱保";
+                case "1" -> "查询成功";
+                default -> value instanceof Number || code.matches("-?\\d+")
+                        ? "未知状态（" + code + "）" : value;
+            };
+        }
+        return format(key, value);
+    }
+
     private static final DateTimeFormatter DATE_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai"));
 

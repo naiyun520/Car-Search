@@ -641,7 +641,7 @@ public class ProviderService {
             }else{
                 // 普通字段：单值提取（原有逻辑）
                 Object raw=path(data,actualKey);
-                Object v=ResultValueFormatter.format(key,raw);
+                Object v=ResultValueFormatter.format(String.valueOf(service.get("code")),key,raw);
                 log.info("[Normalize] key={}, raw={}, formatted={}", key, raw, v);
                 if(v instanceof String s)v=truncate(s,2000);
                 Map<String,Object> item=new LinkedHashMap<>();

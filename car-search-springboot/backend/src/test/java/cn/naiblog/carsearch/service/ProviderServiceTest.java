@@ -14,6 +14,26 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderServiceTest {
+    @Test
+    void insuranceStatusIsScopedToEndDateService() throws Exception {
+        Map<String,Object> service=Map.of("code","end_date","result_schema","{\"status\":\"状态\"}");
+        for (Object value : java.util.List.of(0, "0")) {
+            assertEquals("脱保", provider.normalize(service,Map.of("status",value)).getFirst().get("value"));
+        }
+        for (Object value : java.util.List.of(1, "1")) {
+            assertEquals("查询成功", provider.normalize(service,Map.of("status",value)).getFirst().get("value"));
+        }
+        assertEquals("未知状态（9）",provider.normalize(service,Map.of("status",9)).getFirst().get("value"));
+        assertEquals("暂无数据",provider.normalize(service,Map.of()).getFirst().get("value"));
+        assertEquals("暂无数据",provider.normalize(service,Map.of("status", "")).getFirst().get("value"));
+        assertEquals("脱保",ResultValueFormatter.format("end_date","status","脱保"));
+        Map<String,Object> verification=Map.of("code","other_verification","result_schema","{\"status\":\"状态\"}");
+        assertEquals("匹配",provider.normalize(verification,Map.of("status",1)).getFirst().get("value"));
+        assertEquals("不匹配",provider.normalize(verification,Map.of("status","2")).getFirst().get("value"));
+        assertEquals("查询成功无结果",provider.normalize(verification,Map.of("status",3)).getFirst().get("value"));
+        assertEquals("匹配",ResultValueFormatter.format("end_date","state",1));
+        assertEquals("匹配",ResultValueFormatter.format("end_date","nested.status",1));
+    }
     private final ProviderService provider = new ProviderService(null, new ObjectMapper(), null, "");
 
     @Test
