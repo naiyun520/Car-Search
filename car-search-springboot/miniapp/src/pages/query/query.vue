@@ -277,7 +277,6 @@ function onKeyDelete() {
 // 图片选择和上传
 async function chooseImage(fieldKey) {
   try {
-    console.log(`[Upload] chooseImage 开始 field=${fieldKey}`)
     const res = await new Promise((resolve, reject) => {
       uni.chooseImage({
         count: 1,
@@ -290,12 +289,9 @@ async function chooseImage(fieldKey) {
 
     const filePath = res.tempFilePaths[0]
     const fileInfo = res.tempFiles[0]
-    const fileSizeMB = (fileInfo.size / 1024 / 1024).toFixed(2)
-    console.log(`[Upload] 选中文件 field=${fieldKey}, path=${filePath}, size=${fileSizeMB}MB, type=${fileInfo.type || 'unknown'}`)
 
     // 验证文件大小
     if (fileInfo.size > 5 * 1024 * 1024) {
-      console.warn(`[Upload] 文件过大 field=${fieldKey}, size=${fileSizeMB}MB > 5MB`)
       return uni.showToast({ title: '图片大小不能超过 5MB', icon: 'none' })
     }
 
@@ -303,9 +299,7 @@ async function chooseImage(fieldKey) {
     uploading[fieldKey] = true
     uploadProgress[fieldKey] = 0
 
-    console.log(`[Upload] 开始上传 field=${fieldKey}, path=${filePath}`)
     const uploadResult = await doUploadWithRetry(filePath, fieldKey)
-    console.log(`[Upload] 上传成功 field=${fieldKey}, result=`, uploadResult)
 
     // 上传成功，保存 URL（如果是相对路径则拼接域名）
     let imageUrl = uploadResult.url
@@ -313,12 +307,10 @@ async function chooseImage(fieldKey) {
       const domainMatch = API_BASE_URL.match(/^(https?:\/\/[^/]+)/)
       if (domainMatch) imageUrl = domainMatch[1] + imageUrl
     }
-    console.log(`[Upload] 最终URL field=${fieldKey}, url=${imageUrl}`)
     form.value[fieldKey] = imageUrl
     uni.showToast({ title: '上传成功', icon: 'success' })
 
   } catch (error) {
-    console.error(`[Upload] 上传失败 field=${fieldKey}, error=`, error)
     if (error.message !== 'chooseImage:fail cancel') {
       uni.showToast({ title: error.message || '上传失败', icon: 'none' })
     }
@@ -335,43 +327,32 @@ function clearImage(fieldKey) {
 // 上传图片（带401自动重试）
 async function doUploadWithRetry(filePath, fieldKey, retried = false) {
   const token = await ensureLogin()
-  const uploadUrl = `${API_BASE_URL}/upload/image?access_token=${encodeURIComponent(token.substring(0, 12))}...`
-  console.log(`[Upload] doUploadWithRetry field=${fieldKey}, retried=${retried}, url=${uploadUrl}, hasToken=${!!token}`)
   return new Promise((resolve, reject) => {
     const uploadTask = uni.uploadFile({
-      // token 通过 query 参数传递，兼容 uni.uploadFile 不发送 header 的情况
-      url: `${API_BASE_URL}/upload/image?access_token=${encodeURIComponent(token)}`,
+      url: `${API_BASE_URL}/upload/image`,
       filePath: filePath,
       name: 'file',
       formData: { type: 'license' },
       header: { Authorization: `Bearer ${token}` },
       success: (res) => {
-        console.log(`[Upload] 响应 field=${fieldKey}, statusCode=${res.statusCode}, retried=${retried}`)
         if (res.statusCode === 200) {
           try {
             const data = JSON.parse(res.data)
-            console.log(`[Upload] 响应体 field=${fieldKey}, code=${data.code}, message=${data.message}`)
             if (data.code === 0) return resolve(data.data)
-            console.error(`[Upload] 业务错误 field=${fieldKey}, code=${data.code}, message=${data.message}`)
             reject(new Error(data.message || '上传失败'))
           } catch (e) {
-            console.error(`[Upload] JSON解析失败 field=${fieldKey}, raw=`, res.data)
             reject(new Error('解析响应失败'))
           }
         } else if (res.statusCode === 401 && !retried) {
-          console.warn(`[Upload] 401，清除登录态并重试 field=${fieldKey}`)
           clearLogin()
           doUploadWithRetry(filePath, fieldKey, true).then(resolve).catch(reject)
         } else if (res.statusCode === 401) {
-          console.error(`[Upload] 401 重试后仍失败 field=${fieldKey}`)
           reject(new Error('登录已过期，请重新登录'))
         } else {
-          console.error(`[Upload] 非200状态码 field=${fieldKey}, statusCode=${res.statusCode}, body=`, res.data)
           reject(new Error('上传失败，状态码：' + res.statusCode))
         }
       },
       fail: (err) => {
-        console.error(`[Upload] uploadFile fail field=${fieldKey}, err=`, err)
         reject(new Error(err.errMsg || '网络错误'))
       }
     })
@@ -486,7 +467,7 @@ async function fulfil(orderNo, current=null) {
   if (order.status === 'success') return finish(orderNo)
   if (order.status === 'payment_review') throw finalError(order.message)
   if (order.status === 'query_failed') return finish(orderNo)
-  if (order.status === 'querying') return showAsyncPending(orderNo)
+  if (order.status === 'querying') return ['pending_direct','running_direct'].includes(order.query_stage) ? finish(orderNo) : showAsyncPending(orderNo)
   return poll(orderNo)
 }
 
@@ -499,14 +480,14 @@ async function poll(orderNo) {
     if (order.status === 'paid') return fulfil(orderNo, order)
     if (order.status === 'query_failed') return finish(orderNo)
     if (['payment_review','cancelled','refunded'].includes(order.status)) throw finalError(order.message || statusMessage(order))
-    // 回调模式：querying 状态 → 跳转订单列表并提示等待
-    if (order.status === 'querying') return showAsyncPending(orderNo)
+    // 持久任务处理中：querying 状态 → 跳转订单列表并提示等待
+    if (order.status === 'querying') return ['pending_direct','running_direct'].includes(order.query_stage) ? finish(orderNo) : showAsyncPending(orderNo)
   }
   // 超时后如果仍在 querying，也跳转订单列表
   return showAsyncPending(orderNo)
 }
 
-/** 二级查询（异步/回调）：不在结果页停留，跳转订单列表并弹窗告知预计等待时间 */
+/** 二级查询（主动获取报告）：不在结果页停留，跳转订单列表并弹窗告知预计等待时间 */
 function showAsyncPending(orderNo) {
   clearFlow()
   uni.redirectTo({

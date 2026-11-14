@@ -53,7 +53,7 @@ public class EmailNotificationService {
             boolean classifyQueryFailure=QUERY_FAILED.equals(type);
             if(!classifyQueryFailure&&!enabled(type))return;
             List<Map<String,Object>> rows=jdbc.queryForList("""
-                    select o.id order_id,o.order_no,o.user_id,o.service_name,o.amount,o.client_platform,o.query_attempts,
+                    select o.id order_id,o.order_no,o.user_id,o.service_name,o.amount,o.cost_amount,o.client_platform,o.query_attempts,
                            o.provider_code,o.provider_request_id,o.query_last_error,p.id payment_id,p.wechat_order_type,
                            p.refund_status,p.refund_attempts,p.refund_amount,p.refund_last_error
                     from ci_order o left join ci_payment p on p.order_id=o.id where o.id=? limit 1
@@ -76,7 +76,7 @@ public class EmailNotificationService {
                     values(?,?,?,?,?,?,'pending',0,?,?,?)
                     """,key,type,row.get("order_id"),recipient,subject,body,now,now,now);
             trigger();
-        }catch(Exception error){log.warn("email event enqueue failed type={} order={} message={}",type,orderId,error.getMessage());}
+        }catch(Exception error){log.warn("email event enqueue failed type={} order={} message={}",type,orderId,error.getMessage());if(QUERY_SUCCESS.equals(type)||QUERY_FAILED.equals(type)||PROVIDER_BALANCE.equals(type))throw new IllegalStateException("查询通知入队失败，等待任务恢复",error);}
     }
 
     private String eventKey(String type,Map<String,Object> row,String code,String requestId,String reason,Boolean refundSuccess){
@@ -94,11 +94,25 @@ public class EmailNotificationService {
         StringBuilder b=new StringBuilder();
         line(b,"用户平台",platform);line(b,"用户 ID",row.get("user_id"));line(b,"业务订单号",row.get("order_no"));
         line(b,"服务",row.get("service_name"));line(b,"订单金额","¥"+money(row.get("amount")));
+        line(b,"配置接口成本（估算）",(row.get("cost_amount")==null?"未记录":"¥"+decimalText(row.get("cost_amount")))+"；按下单时配置记录，不代表已核实的单笔余额扣款");
         if(QUERY_FAILED.equals(type)||PROVIDER_BALANCE.equals(type)){
             line(b,"供应商业务码",blank(code,text(row.get("provider_code"))));
             line(b,"供应商请求 ID",blank(requestId,text(row.get("provider_request_id"))));
             line(b,"失败原因",blank(reason,text(row.get("query_last_error"))));
             line(b,"查询尝试次数",row.get("query_attempts"));
+        }
+        if(QUERY_SUCCESS.equals(type)||QUERY_FAILED.equals(type)||PROVIDER_BALANCE.equals(type)){
+            List<Map<String,Object>> balances=jdbc.queryForList("""
+                    select p.name,p.code,s.balance,s.status,s.observed_at from ci_provider p
+                    left join ci_provider_balance_snapshot s on s.id=(select x.id from ci_provider_balance_snapshot x where x.provider_id=p.id order by x.id desc limit 1)
+                    where p.status=1 and p.balance_enabled=1 and p.balance_mode='independent_api' order by p.sort,p.id
+                    """);
+            if(balances.isEmpty()) line(b,"供应商余额","未启用独立余额查询");
+            else for(Map<String,Object> balance:balances){
+                String label=text(balance.get("name"));if(label.isBlank())label=text(balance.get("code"));
+                String value="success".equals(text(balance.get("status")))&&balance.get("balance")!=null?decimalText(balance.get("balance")):"暂不可用";
+                line(b,"供应商余额（"+label+"）",value+"；采集时间："+text(balance.get("observed_at")));
+            }
         }
         if(REFUND_RESULT.equals(type)){
             Object refund=row.get("refund_amount");
@@ -116,7 +130,7 @@ public class EmailNotificationService {
     private String platform(Map<String,Object> row){String p=text(row.get("client_platform")).toLowerCase(Locale.ROOT);if("ios".equals(p))return"iOS";if("android".equals(p))return"安卓";int t=integer(row.get("wechat_order_type"));return t==7||t==8?"iOS":t==0||t==1?"安卓":"未知平台";}
 
     private void trigger(){try{executor.execute(()->dispatch(50));}catch(Exception ignored){}}
-    @Scheduled(fixedDelayString="${car.email-delivery-delay-ms:60000}",initialDelayString="${car.email-delivery-initial-delay-ms:15000}")
+    @Scheduled(scheduler="mailTaskScheduler",fixedDelayString="${car.email-delivery-delay-ms:60000}",initialDelayString="${car.email-delivery-initial-delay-ms:15000}")
     public void retryPending(){trigger();}
 
     void dispatch(int limit){
@@ -146,6 +160,7 @@ public class EmailNotificationService {
     }
 
     private String blank(String first,String fallback){return first==null||first.isBlank()?fallback:first;}
+    private String decimalText(Object value){try{return new BigDecimal(String.valueOf(value)).stripTrailingZeros().toPlainString();}catch(Exception e){return "暂不可用";}}
     private String money(Object value){try{return new BigDecimal(String.valueOf(value)).setScale(2).toPlainString();}catch(Exception ignored){return"0.00";}}
     private int integer(Object value){try{return value instanceof Number n?n.intValue():Integer.parseInt(text(value));}catch(Exception ignored){return 0;}}
     private String text(Object value){return value==null?"":String.valueOf(value).trim();}

@@ -1,0 +1,11 @@
+# 启动还必须设置 CAR_LOCAL_TEST_ONLY=true；仅允许隔离 MySQL 端口。
+server:
+  address: 127.0.0.1
+  port: 18081
+car:
+  query-job-delay-ms: 1000
+  query-job-initial-delay-ms: 3000
+  email-delivery-delay-ms: 1000
+  email-delivery-initial-delay-ms: 3000
+  reconcile-initial-delay-ms: 86400000
+  provider-balance-initial-delay-ms: 86400000

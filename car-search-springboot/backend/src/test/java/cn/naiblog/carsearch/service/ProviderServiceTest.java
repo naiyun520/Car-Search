@@ -34,7 +34,7 @@ class ProviderServiceTest {
         assertEquals("匹配",ResultValueFormatter.format("end_date","state",1));
         assertEquals("匹配",ResultValueFormatter.format("end_date","nested.status",1));
     }
-    private final ProviderService provider = new ProviderService(null, new ObjectMapper(), null, "");
+    private final ProviderService provider = new ProviderService(null, new ObjectMapper(), null);
 
     @Test
     void getQueryEncodesChinesePlateExactlyOnce() throws Exception {

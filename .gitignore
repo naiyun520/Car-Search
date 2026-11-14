@@ -8,6 +8,8 @@ __pycache__/
 # 环境与本地配置
 .env
 *.local
+.local/
+测试数据/
 
 # 数据库备份文件
 mysql_data_*/

@@ -6,6 +6,7 @@ import cn.naiblog.carsearch.service.AuditService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import cn.naiblog.carsearch.db.GeneratedInsert;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -36,9 +37,8 @@ public class ServiceCategoryAdminController {
         Values value = values(body, false);
         if (scalar("select count(*) from ci_service_category where code=?", value.code) > 0) throw new BusinessException("分类编码已存在");
         LocalDateTime now = LocalDateTime.now();
-        jdbc.update("insert into ci_service_category(code,name,icon,sort,status,created_at,updated_at) values(?,?,?,?,?,?,?)",
+        int id=GeneratedInsert.insert(jdbc,"insert into ci_service_category(code,name,icon,sort,status,created_at,updated_at) values(?,?,?,?,?,?,?)",
                 value.code, value.name, value.icon, scalar("select coalesce(max(sort),0)+10 from ci_service_category"), value.status, now, now);
-        int id = Objects.requireNonNull(jdbc.queryForObject("select last_insert_id()", Integer.class));
         audit.record(request, "service_category.create", "service_category", String.valueOf(id), Map.of("code", value.code));
         return ApiResponse.ok(Map.of("id", id), "服务分类已创建");
     }
@@ -76,8 +76,8 @@ public class ServiceCategoryAdminController {
         String code = text(body.get("code")), name = text(body.get("name")), icon = text(body.getOrDefault("icon", "grid")); int status = number(body.getOrDefault("status", 1));
         if (!update && !code.matches("[a-z][a-z0-9_]{2,39}")) throw new BusinessException("分类编码需为3至40位小写字母、数字或下划线");
         if (name.isBlank() || name.length() > 40) throw new BusinessException("分类名称不能为空且不能超过40字");
-        if (!ICONS.contains(icon)) throw new BusinessException("分类图标无效");
-        if (status != 0 && status != 1) throw new BusinessException("分类状态无效");
+        if (!ICONS.contains(icon)) throw new BusinessException("分类图标：请从图标选项中选择，若列表显示异常请刷新后台后重试");
+        if (status != 0 && status != 1) throw new BusinessException("分类状态：请选择启用或停用");
         return new Values(code, name, icon, status);
     }
     private Map<String, Object> find(int id) { List<Map<String, Object>> rows=jdbc.queryForList("select * from ci_service_category where id=?",id);if(rows.isEmpty())throw new BusinessException(404, HttpStatus.NOT_FOUND,"服务分类不存在");return rows.getFirst(); }

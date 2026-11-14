@@ -55,7 +55,13 @@
         </view>
       </view>
 
-      <!-- 结果有效期：一级查询 24 小时、二级查询长期可看 -->
+      <!-- 所有报告统一 24 小时可见期 -->
+      <view class="report-cover" v-if="!isMissing">
+        <view class="report-eyebrow">VEHICLE DATA REPORT</view>
+        <view class="report-cover-title">{{ order.service_name || '车辆信息报告' }}</view>
+        <view class="report-cover-meta">{{ isDemo ? '模拟示例 · 仅供预览' : ('报告编号 ' + (order.order_no || '—')) }}</view>
+        <view class="report-cover-rule">依据本次查询返回的信息整理，请结合车辆实况综合判断。</view>
+      </view>
       <view class="retention-tip" v-if="retentionText">
         <text class="retention-icon">◷</text><text>{{ retentionText }}</text>
       </view>
@@ -78,30 +84,6 @@
 
       <!-- ===== 有结果 → 专业权威展示 ===== -->
       <template v-if="!isMissing && order.result?.length">
-        <!-- 品牌车型卡片（结果中带 brand_id / brand_logo 时展示） -->
-        <view class="card brand-card" v-if="brandCard">
-          <view class="brand-badge" v-if="brandCard.status">{{ brandCard.status }}</view>
-          <image
-            v-if="brandCard.logo && !logoFailed"
-            class="brand-logo"
-            :src="brandCard.logo"
-            mode="aspectFit"
-            @error="logoFailed = true"
-          />
-          <view v-else class="brand-logo brand-logo-fallback">{{ brandCard.initial }}</view>
-          <view class="brand-info">
-            <view class="brand-name">{{ brandCard.name }}</view>
-            <view class="brand-line" v-if="brandCard.vin">
-              <text class="brand-line-label">VIN</text>
-              <text class="brand-line-value">{{ brandCard.vin }}</text>
-            </view>
-            <view class="brand-line" v-if="brandCard.plate">
-              <text class="brand-line-label">车牌号</text>
-              <text class="brand-line-value">{{ brandCard.plate }}</text>
-            </view>
-          </view>
-        </view>
-
         <!-- 报告图片卡片：结果中值为图片 URL 的标量字段单独成卡，无图片自动隐藏 -->
         <template v-for="img in imageCards" :key="img.key">
           <view class="card image-card">
@@ -228,7 +210,7 @@
           <view class="card block" v-if="s.kind === 'fields'">
             <view class="block-title"><text class="block-title-text">{{ s.label }}</text></view>
             <view class="field-grid">
-              <view class="field-cell" v-for="item in s.items" :key="item.key">
+              <view class="field-cell" :class="{ 'field-cell-wide': wideReportField(item) }" v-for="item in s.items" :key="item.key">
                 <text class="field-label">{{ item.label }}</text>
                 <text class="field-value">{{ formatVal(item.value) }}</text>
               </view>
@@ -358,8 +340,9 @@
 
 <script setup>
 import { computed, ref, watch, onUnmounted } from 'vue'
-import { onLoad, onShow, onPullDownRefresh } from '@dcloudio/uni-app'
+import { onLoad, onShow, onHide, onPullDownRefresh } from '@dcloudio/uni-app'
 import { checkoutRequest, request } from '../../utils/request'
+import { createReportLoader } from '../../utils/report-loader'
 
 const APPLE_REFUND_URL='https://support.apple.com/zh-cn/118223'
 const order=ref({})
@@ -383,14 +366,12 @@ watch(order,o=>{
   nowTick.value=Date.now()
 })
 const remainSeconds=computed(()=>{
-  if(order.value.result_retention!=='limited')return null
   return Math.max(0,remainBase.value-Math.floor((nowTick.value-remainLoadedAt.value)/1000))
 })
 const retentionText=computed(()=>{
   const o=order.value
   if(isDemo.value||isExpired.value||o.status!=='success'||!o.result?.length)return ''
-  if(o.result_retention==='permanent')return '本报告长期有效，可随时在订单记录中再次查看'
-  if(o.result_retention==='limited'&&o.result_expires_at)return `结果保留至 ${o.result_expires_at}（剩余 ${durationText(remainSeconds.value)}）`
+  if(o.result_expires_at)return `结果保留至 ${o.result_expires_at}（剩余 ${durationText(remainSeconds.value)}）`
   return ''
 })
 function durationText(sec){
@@ -404,7 +385,6 @@ function durationText(sec){
 }
 const noticeText=computed(()=>{
   if(isDemo.value)return '本页为报告示例，数据均为模拟生成，仅用于展示报告结构与内容。实际查询结果以付费查询返回为准。'
-  if(order.value.result_retention==='permanent')return '本报告支持长期查看，可随时从订单记录再次进入。请勿截图传播包含个人敏感信息的查询结果。'
   return '查询结果自生成时间起保留 24 小时，到期后需重新查询。请及时保存重要信息。'
 })
 
@@ -639,8 +619,7 @@ function riskTone(v) {
   return 'low'
 }
 
-/* ===== 品牌车型卡片：结果中带 brand_id / brand_logo 时展示 ===== */
-const logoFailed = ref(false)
+/* ===== 品牌车型字段归集（原品牌卡片已取消展示，仅用于从下方网格中隐藏卡片专属字段，避免噪音） ===== */
 const BRAND_KEYS = {
   logo: ['result.brand_logo', 'brand_logo'],
   id: ['result.brand_id', 'brand_id'],
@@ -664,25 +643,15 @@ const brandCard = computed(() => {
   const name = String(nameItem?.value ?? '')
   const model = String(modelItem?.value ?? '')
   if (!name && !model) return null
-  // 卡片已展示的字段从下方网格中隐藏，避免重复
+  // 原卡片展示过的字段继续从下方网格中隐藏
   const usedKeys = new Set([...BRAND_KEYS.logo, ...BRAND_KEYS.id])
   if (nameItem) usedKeys.add(nameItem.key)
   if (modelItem) usedKeys.add(modelItem.key)
   if (vinItem) usedKeys.add(vinItem.key)
   if (plateItem) usedKeys.add(plateItem.key)
   if (statusItem) usedKeys.add(statusItem.key)
-  return {
-    logo: /^https?:\/\//.test(String(logo?.value ?? '')) ? String(logo.value) : '',
-    name: name || model,
-    initial: (name || model).trim().charAt(0),
-    vin: vinItem ? String(vinItem.value ?? '') : '',
-    plate: plateItem ? String(plateItem.value ?? '') : '',
-    status: statusItem ? String(statusItem.value ?? '') : '',
-    usedKeys
-  }
+  return { usedKeys }
 })
-// 换订单/换图时重置图片加载失败标记
-watch(() => brandCard.value?.logo, () => { logoFailed.value = false })
 
 /* ===== 报告图片卡片：值为图片 URL 的标量字段单独成卡，无图片自动隐藏 ===== */
 const IMAGE_URL_RE = /^https?:\/\/\S+\.(png|jpe?g|gif|webp|bmp)(\?\S*)?$/i
@@ -901,6 +870,15 @@ let pollTimer=null
 let elapsedTimer=null
 let currentOrderNo=''
 let initialLoaded=false
+let pageVisible=true
+let hasHidden=false
+let pollingActive=false
+let pollingCycle=0
+const reportLoader=createReportLoader(
+  ()=>checkoutRequest('/checkout/status',{orderNo:currentOrderNo}),
+  result=>{order.value=result;markViewedIfNeeded();if(result.status!=='querying')stopPolling()}
+)
+function wideReportField(item){const value=String(formatVal(item.value));return value.length>36||/[\r\n]/.test(value)||/车架号|查询单号/.test(item.label||'')}
 
 onLoad(async options=>{
   // 示例报告模式：直接渲染本地模拟数据，不请求订单接口
@@ -915,19 +893,20 @@ onLoad(async options=>{
   // 有效期倒计时每 30 秒刷新一次显示
   if(!tickTimer)tickTimer=setInterval(()=>{nowTick.value=Date.now()},30000)
   try{
-    order.value=await checkoutRequest('/checkout/status',{orderNo:currentOrderNo})
-    markViewedIfNeeded()
+    await reportLoader.refresh()
+    if(isQuerying.value)startPolling()
   }catch(error){uni.showModal({title:'提示',content:error.message,showCancel:false})}
   finally{loading.value=false;initialLoaded=true}
 })
 
 onShow(async()=>{
+  pageVisible=true
   if(!currentOrderNo) return
+  if(!tickTimer)tickTimer=setInterval(()=>{nowTick.value=Date.now()},30000)
   // 首次进入由 onLoad 负责加载，这里跳过，避免同一页面并发两次订单请求
-  if(!initialLoaded) return
+  if(!initialLoaded&&!hasHidden) return
   try{
-    order.value=await checkoutRequest('/checkout/status',{orderNo:currentOrderNo})
-    markViewedIfNeeded()
+    await reportLoader.refresh()
     if(isQuerying.value&&!pollTimer){
       startPolling()
     }else if(!isQuerying.value){
@@ -942,48 +921,41 @@ onPullDownRefresh(async()=>{
   uni.stopPullDownRefresh()
 })
 
-onUnmounted(()=>{stopPolling();if(tickTimer){clearInterval(tickTimer);tickTimer=null}})
+onHide(()=>{pageVisible=false;hasHidden=true;stopPolling();reportLoader.invalidate();if(tickTimer){clearInterval(tickTimer);tickTimer=null}})
+onUnmounted(()=>{pageVisible=false;stopPolling();reportLoader.invalidate();if(tickTimer){clearInterval(tickTimer);tickTimer=null}})
 
 function startPolling(){
-  stopPolling()
+  if(pollingActive||!pageVisible||isDemo.value)return
+  pollingActive=true
+  pollingCycle++
   elapsed.value=0
   elapsedTimer=setInterval(()=>{elapsed.value++},1000)
-  pollTimer=setInterval(async()=>{
-    try{
-      if(order.value.query_id){
-        // 查询状态端点（含超时降级轮询触发），完成后回查订单详情
-        const res=await request(`/query-status/${order.value.query_id}`)
-        if(res&&(res.status==='completed'||res.status==='failed')){
-          stopPolling()
-          order.value=await checkoutRequest('/checkout/status',{orderNo:order.value.order_no})
-          markViewedIfNeeded()
-        }
-      }else{
-        // 无 query_id 时直接轮询订单状态，避免请求 /query-status/undefined
-        order.value=await checkoutRequest('/checkout/status',{orderNo:order.value.order_no||currentOrderNo})
-        if(order.value.status!=='querying') stopPolling()
-        markViewedIfNeeded()
-      }
-    }catch(e){console.warn('[Polling] 查询状态失败',e)}
+  scheduleNextPoll()
+}
+function scheduleNextPoll(){
+  if(pollTimer||!pollingActive||!pageVisible||order.value.status!=='querying')return
+  const cycle=pollingCycle
+  pollTimer=setTimeout(async()=>{
+    if(cycle!==pollingCycle)return
+    pollTimer=null
+    try{await reportLoader.refresh()}catch(e){console.warn('[Polling] 查询状态失败',e)}
+    if(cycle===pollingCycle&&pollingActive&&pageVisible&&order.value.status==='querying')scheduleNextPoll()
   },5000)
 }
-
 function stopPolling(){
-  if(pollTimer){clearInterval(pollTimer);pollTimer=null}
+  pollingActive=false
+  pollingCycle++
+  if(pollTimer){clearTimeout(pollTimer);pollTimer=null}
   if(elapsedTimer){clearInterval(elapsedTimer);elapsedTimer=null}
 }
-
 async function manualRefresh(){await reloadOrder()}
 async function reloadOrder(){
-  if(isDemo.value)return
+  if(isDemo.value||!pageVisible)return
   try{
-    const prev=order.value.status
-    order.value=await checkoutRequest('/checkout/status',{orderNo:order.value.order_no||currentOrderNo})
-    markViewedIfNeeded()
-    if(prev==='querying'&&order.value.status!=='querying') stopPolling()
+    await reportLoader.refresh()
+    if(isQuerying.value)startPolling()
   }catch(e){console.warn('[reloadOrder] 刷新失败',e)}
 }
-
 function markViewedIfNeeded(){
   if(isDemo.value)return
   const o=order.value
@@ -1068,17 +1040,6 @@ function cellText(v){
 .banner-action{ height:68rpx; line-height:68rpx; margin:18rpx 0 0; padding:0 34rpx; border-radius:34rpx; background:#2E7DFF; color:#fff; font-size:24rpx; font-weight:600; width:100%; box-shadow:0 8rpx 18rpx rgba(46,125,255,.26); }
 .spinner{ border:6rpx solid #BBD6FF; border-top-color:#2E7DFF; border-radius:50%; width:42rpx; height:42rpx; margin:10rpx; animation:rotate 1s linear infinite; }
 @keyframes rotate{ to{ transform:rotate(360deg); } }
-
-/* ===== 品牌车型卡片 ===== */
-.brand-card{ position:relative; display:flex; align-items:center; gap:26rpx; padding:34rpx 30rpx; margin-bottom:26rpx; }
-.brand-badge{ position:absolute; top:24rpx; right:26rpx; font-size:20rpx; font-weight:700; color:#0B7A56; background:#E8F8F1; border:1rpx solid #B8E6D0; padding:6rpx 20rpx; border-radius:20rpx; }
-.brand-logo{ width:150rpx; height:104rpx; flex:none; border-radius:16rpx; background:#F5F7FA; }
-.brand-logo-fallback{ display:flex; align-items:center; justify-content:center; font-size:52rpx; font-weight:700; color:#2E7DFF; background:#E0EEFF; }
-.brand-info{ flex:1; min-width:0; }
-.brand-name{ font-size:38rpx; font-weight:700; color:#1F2937; padding-right:130rpx; word-break:break-all; }
-.brand-line{ display:flex; align-items:baseline; gap:14rpx; margin-top:12rpx; }
-.brand-line-label{ flex:none; font-size:22rpx; color:#9CA3AF; }
-.brand-line-value{ font-size:24rpx; font-weight:600; color:#1F2937; word-break:break-all; }
 
 /* ===== 报告图片卡片 ===== */
 .image-card{ padding:32rpx 30rpx; margin-bottom:26rpx; }
@@ -1239,4 +1200,22 @@ function cellText(v){
 .block-btn{ margin-top:22rpx; height:76rpx; line-height:76rpx; font-size:25rpx; }
 .disclaimer{ font-size:21rpx; color:#9CA3AF; line-height:1.7; padding:14rpx 10rpx 26rpx; }
 .back-btn{ margin-top:6rpx; }
+
+.result-page{background:#f0f4f9;padding-bottom:60rpx}
+.report-cover{margin:24rpx 24rpx 18rpx;padding:38rpx 30rpx;border-radius:24rpx;background:linear-gradient(130deg,#173356,#285784);color:#fff;box-shadow:0 12rpx 28rpx rgba(24,53,87,.16)}
+.report-eyebrow{font-size:19rpx;letter-spacing:4rpx;color:#bdd4ef}
+.report-cover-title{margin-top:18rpx;font-size:39rpx;font-weight:700;line-height:1.4}
+.report-cover-meta{margin-top:22rpx;font-size:22rpx;color:#d9e6f7;word-break:break-all}
+.report-cover-rule{margin-top:22rpx;padding-top:20rpx;border-top:1rpx solid rgba(255,255,255,.18);font-size:21rpx;line-height:1.7;color:#c5d6e9}
+.result-page .card{border:1rpx solid #e2eaf4;box-shadow:0 6rpx 22rpx rgba(35,65,105,.04);border-radius:22rpx}
+.result-page .block-title{color:#213c60;font-weight:700;border-bottom:1rpx solid #edf1f6;padding-bottom:22rpx;margin-bottom:22rpx}
+.result-page .field-grid{gap:2rpx;background:#eef2f7;border-radius:14rpx;overflow:hidden}
+.result-page .field-cell{box-sizing:border-box;width:calc(50% - 2rpx);flex:1 0 calc(50% - 2rpx);background:#fff;padding:22rpx;min-width:0}
+.result-page .field-cell-wide{width:100%;flex-basis:100%}
+.result-page .field-label{color:#7b8a9e;font-size:23rpx}
+.result-page .field-value{color:#233a55;font-size:28rpx;font-weight:600;line-height:1.7;word-break:break-word;overflow-wrap:anywhere;white-space:pre-wrap}
+.result-page .rec-card{background:#f6f9fd;border:1rpx solid #e6edf6;border-radius:16rpx;margin-bottom:16rpx}
+.result-page .retention-tip{background:#e8eff8;color:#526e91;border:0;font-size:22rpx;line-height:1.6}
+.result-page .tab-item.active .tab-label{color:#214f83;font-weight:700}
+.result-page .tab-underline{background:#214f83}
 </style>

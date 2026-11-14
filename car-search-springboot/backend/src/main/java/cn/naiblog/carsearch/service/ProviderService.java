@@ -3,7 +3,6 @@ package cn.naiblog.carsearch.service;
 import cn.naiblog.carsearch.security.CryptoService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
@@ -17,53 +16,22 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 
 @Service
 public class ProviderService {
     private static final Logger log=LoggerFactory.getLogger(ProviderService.class);
     private final CryptoService crypto; private final ObjectMapper mapper; private final JdbcTemplate jdbc;
     private final HttpClient http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
-    private final String callbackBaseUrl;
-    public ProviderService(CryptoService crypto,ObjectMapper mapper,JdbcTemplate jdbc,
-                           @Value("${car.callback-base-url:}")String callbackBaseUrl){
-        this.crypto=crypto;this.mapper=mapper;this.jdbc=jdbc;this.callbackBaseUrl=callbackBaseUrl;
+    public ProviderService(CryptoService crypto,ObjectMapper mapper,JdbcTemplate jdbc){
+        this.crypto=crypto;this.mapper=mapper;this.jdbc=jdbc;
     }
 
-    public Result query(Map<String,Object> service,Map<String,Object> input){
-        log.info("[ProviderQuery] 开始查询 service_code={}, provider_api_id={}, query_mode={}, callback_mode={}, input={}",
-                service.get("code"), service.get("provider_api_id"), service.get("query_mode"),
-                service.getOrDefault("callback_mode","none"), input);
-        try{
-            int providerId=service.get("provider_api_id")instanceof Number n?n.intValue():0;
-            String queryMode=String.valueOf(service.getOrDefault("query_mode","single"));
-            String callbackMode=String.valueOf(service.getOrDefault("callback_mode","none"));
-            Result result;
-            // 回调模式优先：下单后立即返回，等回调或降级轮询
-            if("callback".equals(callbackMode)&&providerId>0){
-                result=queryCallbackMode(service,input,providerId);
-            }
-            else if("async".equals(queryMode)&&providerId>0)result=queryAsync(service,input,providerId);
-            else if(providerId>0)result=queryViaProvider(service,input,providerId);
-            else result=queryDirect(service,input);
-            log.info("[ProviderQuery] 查询成功 code={}, requestId={}, dataCount={}", result.code(), result.requestId(), result.data().size());
-            return result;
-        }catch(RuntimeException e){
-            log.error("[ProviderQuery] 查询失败 service_code={}, error={}", service.get("code"), e.getMessage(), e);
-            throw e;
-        }catch(Exception e){
-            log.error("[ProviderQuery] 查询异常 service_code={}, error={}", service.get("code"), e.getMessage(), e);
-            throw new IllegalStateException("供应商连接失败",e);
-        }
-    }
-
-    /** 现有直连模式：从 request_url_cipher 解密 URL */
     private Result queryDirect(Map<String,Object> service,Map<String,Object> input)throws Exception{
         String configured=String.valueOf(crypto.decrypt(String.valueOf(service.getOrDefault("request_url_cipher",""))).getOrDefault("url","")).trim();
         if(configured.isBlank())throw new IllegalStateException("查询接口未配置");
         URI uri=new URI(configured);assertPublicHttps(uri);
         String method=String.valueOf(service.getOrDefault("request_method","GET")).toUpperCase();if(!List.of("GET","POST").contains(method))throw new IllegalStateException("查询接口请求方式无效");
-        log.info("[DirectQuery] 直连模式 url={}, method={}, input={}", uri, method, input);
+        log.info("[DirectQuery] 直连模式 host={}, path={}, method={}, inputKeys={}", uri.getHost(), uri.getPath(), method, input.keySet());
         HttpRequest.Builder builder=HttpRequest.newBuilder().timeout(Duration.ofSeconds(20)).header("Accept","application/json").header("User-Agent","CarInquiry/2.0");
         if("GET".equals(method))builder.uri(withQuery(uri,input)).GET();else builder.uri(withoutQueryKeys(uri,input.keySet())).header("Content-Type","application/x-www-form-urlencoded").POST(HttpRequest.BodyPublishers.ofString(form(input)));
         return executeAndParse(builder,service);
@@ -87,12 +55,12 @@ public class ProviderService {
 
         // 检查协议
         boolean allowHttp=provider.get("allow_http")instanceof Number n&&n.intValue()==1;
-        if(!allowHttp)assertPublicHttps(uri);
+        assertProviderUri(uri,allowHttp);
 
         // 构建请求参数
         String serviceVersion=String.valueOf(service.getOrDefault("api_version","")).trim();
         Map<String,String>params=buildSignedParams(provider,input,serviceVersion);
-        log.info("[ProviderQuery] 供应商模式 url={}, params={}", uri, params);
+        log.info("[ProviderQuery] 供应商模式 host={}, path={}, paramKeys={}", uri.getHost(), uri.getPath(), params.keySet());
 
         // 发送 POST 请求
         HttpRequest.Builder builder=HttpRequest.newBuilder().uri(uri).timeout(Duration.ofSeconds(20))
@@ -100,83 +68,6 @@ public class ProviderService {
                 .header("Content-Type","application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(form(params)));
         return executeAndParse(builder,service);
-    }
-
-    /** 回调模式：下单后立即返回，等回调或降级轮询 */
-    private Result queryCallbackMode(Map<String,Object> service,Map<String,Object> input,int providerId)throws Exception{
-        List<Map<String,Object>> rows=jdbc.queryForList("select * from ci_provider where id=? and status=1",providerId);
-        if(rows.isEmpty())throw new IllegalStateException("供应商配置不存在或已禁用");
-        Map<String,Object> provider=rows.getFirst();
-
-        String baseUrl=String.valueOf(provider.get("base_url")).trim();
-        String apiPath=String.valueOf(service.getOrDefault("api_path","")).trim();
-        if(baseUrl.isBlank())throw new IllegalStateException("供应商基础URL未配置");
-        if(apiPath.isBlank())throw new IllegalStateException("服务接口路径未配置");
-
-        boolean allowHttp=provider.get("allow_http")instanceof Number n&&n.intValue()==1;
-
-        // 拼接完整 URL
-        String fullUrl=buildFullUrl(baseUrl,apiPath);
-        URI uri=new URI(fullUrl);
-        if(!allowHttp)assertPublicHttps(uri);
-
-        // 构建回调 URL（供应商会 POST 结果到此地址）
-        int serviceId=((Number)service.get("id")).intValue();
-        String callbackSecret=String.valueOf(service.getOrDefault("callback_secret","")).trim();
-        String callbackUrl=buildCallbackUrl(serviceId);
-        log.info("[CallbackMode] callbackUrl={}, callbackSecret={}", callbackUrl,
-                callbackSecret.isBlank()?"(无)":"****");
-
-        // 构建回调参数
-        Map<String,Object> callbackParam=new LinkedHashMap<>();
-        callbackParam.put("callback_url",callbackUrl);
-        if(!callbackSecret.isBlank()){
-            callbackParam.put("HTTP-X-CA-PROXY-SIGNATURE",callbackSecret);
-        }
-
-        // 合并输入参数，添加 callback
-        Map<String,Object> mergedInput=new LinkedHashMap<>(input);
-        mergedInput.put("callback",toJson(callbackParam));
-
-        // 构建带签名的请求参数
-        String serviceVersion=String.valueOf(service.getOrDefault("api_version","")).trim();
-        Map<String,String>params=buildSignedParams(provider,mergedInput,serviceVersion);
-        log.info("[CallbackMode] 下单 url={}, params={}", uri, params);
-
-        // 发送下单请求
-        HttpRequest.Builder builder=HttpRequest.newBuilder().uri(uri).timeout(Duration.ofSeconds(20))
-                .header("Accept","application/json").header("User-Agent","CarInquiry/2.0")
-                .header("Content-Type","application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString(form(params)));
-
-        HttpResponse<byte[]> response=http.send(builder.build(),HttpResponse.BodyHandlers.ofByteArray());
-        if(response.statusCode()!=200)throw new IllegalStateException("下单接口 HTTP 状态异常："+response.statusCode());
-
-        String body=new String(response.body(),StandardCharsets.UTF_8);
-        log.info("[CallbackMode] 下单响应 body={}", body);
-        Map<String,Object> payload=mapper.readValue(response.body(),new TypeReference<LinkedHashMap<String,Object>>(){});
-        String number=String.valueOf(payload.getOrDefault("number",""));
-        if(!"200".equals(number)){
-            String msg=truncate(String.valueOf(payload.getOrDefault("message","")),160);
-            throw new ProviderQueryException("下单失败"+(msg.isBlank()?"":"："+msg),number,"");
-        }
-
-        // 提取 query_id
-        String idFieldPath=String.valueOf(service.getOrDefault("id_field_path","")).trim();
-        String queryId=extractQueryId(payload,idFieldPath);
-        if(queryId.isBlank())throw new IllegalStateException("下单成功但未返回 query_id");
-
-        // 保存查询跟踪记录
-        LocalDateTime now=LocalDateTime.now();
-        jdbc.update(
-                "insert into ci_query(query_id,service_id,status,request_body,created_at,updated_at) values(?,?,?,?,?,?)",
-                queryId,serviceId,"pending",toJson(input),now,now);
-        log.info("[CallbackMode] 下单成功 queryId={}，等待回调", queryId);
-
-        // 立即返回（不等待回调）
-        // 返回 "processing" 标记，QueryRunnerService 会识别并保持订单为 querying 状态
-        log.info("[CallbackMode] 返回 processing 标记，等待回调或降级轮询");
-        return new Result("processing",queryId,List.of(Map.of("key","_status","label","查询状态","value","供应商处理中，结果将通过回调返回")));
     }
 
     /** 提取 query_id（支持配置路径或兼容不同字段名） */
@@ -188,7 +79,7 @@ public class ProviderService {
             if(value!=null){
                 String val=String.valueOf(value).trim();
                 if(!val.isBlank()){
-                    log.info("[ExtractQueryId] 按路径提取成功: {}={}", fieldPath, val);
+                    log.info("[ExtractQueryId] 按路径提取成功 path={}, requestId={}", fieldPath,mask(val));
                     return val;
                 }
             }
@@ -204,7 +95,7 @@ public class ProviderService {
             for(String key:new String[]{"query_id","code_id","order_id","task_id","report_id","id"}){
                 String val=String.valueOf(resultMap.getOrDefault(key,"")).trim();
                 if(!val.isBlank()){
-                    log.info("[ExtractQueryId] 在 result.{} 找到值: {}", key, val);
+                    log.info("[ExtractQueryId] 在 result.{} 找到值 requestId={}", key,mask(val));
                     return val;
                 }
             }
@@ -213,186 +104,137 @@ public class ProviderService {
         for(String key:new String[]{"query_id","code_id","order_id","task_id","report_id","id"}){
             String val=String.valueOf(payload.getOrDefault(key,"")).trim();
             if(!val.isBlank()){
-                log.info("[ExtractQueryId] 在顶层 {} 找到值: {}", key, val);
+                log.info("[ExtractQueryId] 在顶层 {} 找到值 requestId={}", key,mask(val));
                 return val;
             }
         }
-        log.warn("[ExtractQueryId] 未找到任何ID字段, payload={}", payload);
+        log.warn("[ExtractQueryId] 未找到任何ID字段, payloadKeys={}", payload.keySet());
         return "";
     }
 
-    /** 构建回调 URL */
-    private String buildCallbackUrl(int serviceId){
-        // 回调 URL 格式：https://your-domain/api/callback/provider/{serviceId}
-        String baseUrl=callbackBaseUrl;
-        if(baseUrl==null||baseUrl.isBlank()){
-            log.warn("[CallbackMode] callback-base-url 未配置，使用相对路径（仅本地测试有效）");
-            return "/api/callback/provider/"+serviceId;
+    /** 执行一次同步查询，忽略异步/回调模式标记；供持久化任务的 DIRECT 阶段调用。 */
+    public Result executeDirect(Map<String,Object> service,Map<String,Object> input)throws Exception{
+        int providerId=number(service.get("provider_api_id"));
+        return providerId>0?queryViaProvider(service,input,providerId):queryDirect(service,input);
+    }
+
+    /** 单次异步下单。只提交一次并返回供应商请求 ID，不轮询、不写订单状态。 */
+    public SubmitResult submitAsync(Map<String,Object> service,Map<String,Object> input)throws Exception{
+        int providerId=number(service.get("provider_api_id"));
+        if(providerId<=0)throw new IllegalStateException("异步服务未绑定供应商");
+        Map<String,Object> provider=provider(providerId);
+        URI uri=providerUri(provider,String.valueOf(service.getOrDefault("api_path","")));
+        Map<String,Object> requestInput=new LinkedHashMap<>(input);
+        String apiVersion=String.valueOf(service.getOrDefault("api_version","")).trim();
+        Map<String,String> params=buildSignedParams(provider,requestInput,apiVersion);
+        HttpResponse<byte[]> response=sendForm(uri,params);
+        Map<String,Object> payload=parsePayload(response,"下单");
+        String success=String.valueOf(service.getOrDefault("response_success_value","200"));
+        String code=String.valueOf(payload.getOrDefault("number",payload.getOrDefault("code",""))).trim();
+        if(!success.equals(code)&&!"200".equals(code)){
+            String message=truncate(String.valueOf(payload.getOrDefault("message",payload.getOrDefault("msg",""))),160);
+            throw new ProviderQueryException("下单失败"+(message.isBlank()?"":"："+message),code.isBlank()?"missing_code":code,"");
         }
-        baseUrl=baseUrl.endsWith("/")?baseUrl.substring(0,baseUrl.length()-1):baseUrl;
-        return baseUrl+"/api/callback/provider/"+serviceId;
+        String requestId=extractQueryId(payload,String.valueOf(service.getOrDefault("id_field_path","")));
+        if(requestId.isBlank())throw new IllegalStateException("下单成功但未返回供应商请求 ID");
+        log.info("[ProviderSubmit] 成功 service={}, requestId={}, responseKeys={}",service.get("code"),mask(requestId),payload.keySet());
+        return new SubmitResult(code.isBlank()?success:code,requestId);
     }
 
-    private String toJson(Object obj){
-        try{return mapper.writeValueAsString(obj);}catch(Exception e){return "{}";}
+    /** 单次获取报告。一次调用只返回一个状态，调度与等待由数据库任务负责。 */
+    public FetchResult fetchReport(Map<String,Object> service,String providerRequestId)throws Exception{
+        int providerId=number(service.get("provider_api_id"));
+        if(providerId<=0)throw new IllegalStateException("异步服务未绑定供应商");
+        Map<String,Object> provider=provider(providerId);
+        URI uri=providerUri(provider,String.valueOf(service.getOrDefault("fetch_api_path","")));
+        String fetchVersion=String.valueOf(service.getOrDefault("fetch_api_version","")).trim();
+        if(fetchVersion.isBlank())fetchVersion=String.valueOf(service.getOrDefault("api_version","")).trim();
+        String paramName=String.valueOf(service.getOrDefault("fetch_api_param_name","query_id")).trim();
+        if(paramName.isBlank())paramName="query_id";
+        Map<String,String> params=buildSignedParams(provider,Map.of(paramName,providerRequestId),fetchVersion);
+        HttpResponse<byte[]> response=sendForm(uri,params);
+        Map<String,Object> payload=parsePayload(response,"获取报告");
+        return parseReport(service,payload,providerRequestId);
     }
 
-    /** 异步两步式查询：下单→轮询获取报告 */
-    private Result queryAsync(Map<String,Object> service,Map<String,Object> input,int providerId)throws Exception{
+    public FetchResult parseReport(Map<String,Object> service,Map<String,Object> payload,String providerRequestId)throws Exception{
+        String code=String.valueOf(payload.getOrDefault("number",payload.getOrDefault("code",""))).trim();
+        if(!"200".equals(code)){
+            String message=truncate(String.valueOf(payload.getOrDefault("message",payload.getOrDefault("msg","查询失败"))),160);
+            return new FetchResult(FetchState.FAILED,code,providerRequestId,List.of(),message);
+        }
+        if(!(payload.get("result") instanceof Map<?,?> raw))
+            return new FetchResult(FetchState.RUNNING,code,providerRequestId,List.of(),"供应商处理中");
+        Map<String,Object> result=flattenReport(cast(raw));
+        QueryStatusResolver status=QueryStatusResolver.resolve(result);
+        if(status==QueryStatusResolver.FAILED){
+            String message=truncate(String.valueOf(result.getOrDefault("query_status_text",result.getOrDefault("result_status_text","查询失败"))),160);
+            return new FetchResult(FetchState.FAILED,code,providerRequestId,List.of(),message);
+        }
+        if(status!=QueryStatusResolver.SUCCESS)
+            return new FetchResult(FetchState.RUNNING,code,providerRequestId,List.of(),"供应商处理中");
+        Map<String,Object> report=flattenReport(result);
+        Map<String,Object> schema=mapper.readValue(String.valueOf(service.getOrDefault("result_schema","{}")),new TypeReference<LinkedHashMap<String,Object>>(){});
+        if(!QueryStatusResolver.reportHasContent(schema,report))
+            return new FetchResult(FetchState.NO_DATA,code,providerRequestId,List.of(),"查询成功但无可展示结果");
+        return new FetchResult(FetchState.SUCCESS,code,providerRequestId,normalize(service,report),"");
+    }
+
+    /** One independent, signed balance request. The caller is responsible for the provider-level feature switch. */
+    public BalanceResult queryBalance(Map<String,Object> provider)throws Exception{
+        if(!"independent_api".equals(String.valueOf(provider.getOrDefault("balance_mode","unsupported"))))
+            throw new IllegalStateException("该供应商未提供独立余额接口，请停用它的余额查询功能");
+        URI uri=providerUri(provider,String.valueOf(provider.getOrDefault("balance_api_path","")));
+        String version=String.valueOf(provider.getOrDefault("balance_api_version","")).trim();
+        Map<String,Object> payload=parsePayload(sendForm(uri,buildSignedParams(provider,Map.of(),version)),"balance");
+        String code=String.valueOf(payload.getOrDefault("number",payload.getOrDefault("code",""))).trim();
+        if(!"200".equals(code)) throw new ProviderQueryException("供应商余额接口未成功，请核对余额接口的认证配置（业务码："+code+"）",code.isBlank()?"missing_code":code,"");
+        String valuePath=String.valueOf(provider.getOrDefault("balance_value_path","")).trim();
+        if(valuePath.isBlank()) throw new IllegalStateException("余额字段路径未填写，请编辑供应商的余额配置，例如 result.balance");
+        Object raw=path(payload,valuePath);
+        if(raw==null) throw new IllegalStateException("余额接口响应中没有找到字段“"+valuePath+"”，请核对余额字段路径");
+        try{return new BalanceResult(new java.math.BigDecimal(String.valueOf(raw).trim()),code);}
+        catch(NumberFormatException e){throw new IllegalStateException("余额字段“"+valuePath+"”不是数字，无法保存余额，请核对字段配置");}
+    }
+
+    private Map<String,Object> provider(int providerId){
         List<Map<String,Object>> rows=jdbc.queryForList("select * from ci_provider where id=? and status=1",providerId);
         if(rows.isEmpty())throw new IllegalStateException("供应商配置不存在或已禁用");
-        Map<String,Object> provider=rows.getFirst();
-
-        String baseUrl=String.valueOf(provider.get("base_url")).trim();
-        String orderApiPath=String.valueOf(service.getOrDefault("api_path","")).trim();
-        String fetchApiPath=String.valueOf(service.getOrDefault("fetch_api_path","")).trim();
-        if(baseUrl.isBlank())throw new IllegalStateException("供应商基础URL未配置");
-        if(orderApiPath.isBlank())throw new IllegalStateException("下单接口路径未配置");
-        if(fetchApiPath.isBlank())throw new IllegalStateException("获取报告接口路径未配置");
-
-        boolean allowHttp=provider.get("allow_http")instanceof Number n&&n.intValue()==1;
-
-        // 第一步：调用下单接口
-        String orderUrl=buildFullUrl(baseUrl,orderApiPath);
-        URI orderUri=new URI(orderUrl);
-        if(!allowHttp)assertPublicHttps(orderUri);
-
-        String serviceVersion=String.valueOf(service.getOrDefault("api_version","")).trim();
-        String fetchVersion=String.valueOf(service.getOrDefault("fetch_api_version","")).trim();
-        if(fetchVersion.isBlank())fetchVersion=serviceVersion; // 回退到 api_version
-        Map<String,String>orderParams=buildSignedParams(provider,input,serviceVersion);
-        log.info("[AsyncQuery] 第一步：下单 url={}, params={}, version={}", orderUri, orderParams, serviceVersion);
-        HttpRequest.Builder orderBuilder=HttpRequest.newBuilder().uri(orderUri).timeout(Duration.ofSeconds(20))
-                .header("Accept","application/json").header("User-Agent","CarInquiry/2.0")
-                .header("Content-Type","application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString(form(orderParams)));
-
-        HttpResponse<byte[]> orderResponse=http.send(orderBuilder.build(),HttpResponse.BodyHandlers.ofByteArray());
-        if(orderResponse.statusCode()!=200)throw new IllegalStateException("下单接口 HTTP 状态异常："+orderResponse.statusCode());
-
-        String orderBody=new String(orderResponse.body(),StandardCharsets.UTF_8);
-        log.info("[AsyncQuery] 下单响应 body={}", orderBody);
-        Map<String,Object> orderPayload=mapper.readValue(orderResponse.body(),new TypeReference<LinkedHashMap<String,Object>>(){});
-        String orderNumber=String.valueOf(orderPayload.getOrDefault("number",""));
-        if(!"200".equals(orderNumber)){
-            String msg=truncate(String.valueOf(orderPayload.getOrDefault("message","")),160);
-            throw new ProviderQueryException("下单失败"+(msg.isBlank()?"":"："+msg),orderNumber,"");
-        }
-
-        // 提取 query_id（兼容不同字段名：query_id/code_id/order_id）
-        Object resultObj=orderPayload.get("result");
-        String queryId="";
-        if(resultObj instanceof Map){
-            @SuppressWarnings("unchecked")Map<String,Object> resultMap=(Map<String,Object>)resultObj;
-            for(String key:new String[]{"query_id","code_id","order_id"}){
-                String val=String.valueOf(resultMap.getOrDefault(key,"")).trim();
-                if(!val.isBlank()){queryId=val;break;}
-            }
-        }
-        if(queryId.isBlank())throw new IllegalStateException("下单成功但未返回 query_id");
-
-        // 第二步：轮询获取报告
-        int pollInterval=service.get("poll_interval_sec")instanceof Number n?Math.max(2,n.intValue()):5;
-        int pollTimeout=service.get("poll_timeout_sec")instanceof Number n?Math.max(10,n.intValue()):120;
-        long deadline=System.currentTimeMillis()+pollTimeout*1000L;
-
-        String fetchUrl=buildFullUrl(baseUrl,fetchApiPath);
-        URI fetchUri=new URI(fetchUrl);
-        if(!allowHttp)assertPublicHttps(fetchUri);
-
-        String codePath=String.valueOf(service.getOrDefault("response_code_path","code")).trim();
-        String successValue=String.valueOf(service.getOrDefault("response_success_value","200"));
-        String dataPath=String.valueOf(service.getOrDefault("response_data_path","data")).trim();
-
-        int pollCount=0;
-        while(System.currentTimeMillis()<deadline){
-            pollCount++;
-            // 构建获取报告的请求参数（使用 fetchVersion）
-            Map<String,String>fetchParams=buildSignedParams(provider,Map.of("query_id",queryId),fetchVersion);
-            log.info("[AsyncQuery] 第二步：获取报告 pollCount={}, url={}, params={}, version={}", pollCount, fetchUri, fetchParams, fetchVersion);
-
-            HttpRequest.Builder fetchBuilder=HttpRequest.newBuilder().uri(fetchUri).timeout(Duration.ofSeconds(20))
-                    .header("Accept","application/json").header("User-Agent","CarInquiry/2.0")
-                    .header("Content-Type","application/x-www-form-urlencoded")
-                    .POST(HttpRequest.BodyPublishers.ofString(form(fetchParams)));
-
-            HttpResponse<byte[]> fetchResponse=http.send(fetchBuilder.build(),HttpResponse.BodyHandlers.ofByteArray());
-            if(fetchResponse.statusCode()!=200)throw new IllegalStateException("获取报告接口 HTTP 状态异常："+fetchResponse.statusCode());
-
-            String fetchBody=new String(fetchResponse.body(),StandardCharsets.UTF_8);
-            log.info("[AsyncQuery] 获取报告响应 pollCount={}, body={}", pollCount, fetchBody);
-            Map<String,Object> fetchPayload=mapper.readValue(fetchResponse.body(),new TypeReference<LinkedHashMap<String,Object>>(){});
-            String fetchNumber=String.valueOf(fetchPayload.getOrDefault("number",""));
-
-            if(!"200".equals(fetchNumber)){
-                String msg=truncate(String.valueOf(fetchPayload.getOrDefault("message","")),160);
-                throw new ProviderQueryException("获取报告失败"+(msg.isBlank()?"":"："+msg),fetchNumber,"");
-            }
-
-            // 检查查询状态（兼容不同字段名和值）
-            Object fetchResult=fetchPayload.get("result");
-            if(fetchResult instanceof Map){
-                @SuppressWarnings("unchecked")Map<String,Object> fr=(Map<String,Object>)fetchResult;
-                // 获取状态字段和值（兼容 query_status、result_status、order_status）
-                String statusField="";
-                String statusValue="";
-                for(String key:new String[]{"query_status","result_status","order_status"}){
-                    String val=String.valueOf(fr.getOrDefault(key,"")).trim();
-                    if(!val.isBlank()){statusField=key;statusValue=val;break;}
-                }
-
-                // 判断是否成功
-                boolean isSuccess;
-                boolean isFailed;
-                if("order_status".equals(statusField)){
-                    // order_status: 0=查询中, 1=查询成功, 2=查询失败
-                    isSuccess="1".equals(statusValue);
-                    isFailed="2".equals(statusValue);
-                }else if("result_status".equals(statusField)){
-                    // result_status: 1=成功, 2=处理中, 3=失败
-                    isSuccess="1".equals(statusValue);
-                    isFailed="3".equals(statusValue);
-                }else{
-                    // query_status: 3=成功, 7=失败
-                    isSuccess="3".equals(statusValue);
-                    isFailed="7".equals(statusValue);
-                }
-
-                if(isSuccess){
-                    // 兼容两种报告结构：部分供应商在 result 里再嵌一层 result（旧结构）；
-                    // 官方文档为平铺结构——拍平后外层元数据（vin/result_status）与内层报告体合并
-                    return new Result(successValue,queryId,normalize(service,flattenReport(fr)));
-                }
-
-                if(isFailed){
-                    String statusText=String.valueOf(fr.getOrDefault("query_status_text",fr.getOrDefault("result_status_text","查询失败")));
-                    throw new ProviderQueryException(statusText,"query_failed",queryId);
-                }
-
-                // 其他状态=查询中，继续轮询
-            }
-
-            // 等待后重试
-            Thread.sleep(pollInterval*1000L);
-        }
-
-        // 超时
-        throw new ProviderQueryException("查询超时，请稍后重试","timeout",queryId);
+        return rows.getFirst();
     }
 
-    /** 构建带签名的请求参数（带服务级版本覆盖） */
+    private URI providerUri(Map<String,Object> provider,String apiPath)throws Exception{
+        String baseUrl=String.valueOf(provider.getOrDefault("base_url","")).trim();
+        apiPath=apiPath==null?"":apiPath.trim();
+        if(baseUrl.isBlank()||apiPath.isBlank())throw new IllegalStateException("供应商地址或接口路径未配置");
+        URI uri=new URI(buildFullUrl(baseUrl,apiPath));
+        boolean allowHttp=number(provider.get("allow_http"))==1;
+        assertProviderUri(uri,allowHttp);
+        return uri;
+    }
+
+    private HttpResponse<byte[]> sendForm(URI uri,Map<String,String>params)throws Exception{
+        HttpRequest request=HttpRequest.newBuilder().uri(uri).timeout(Duration.ofSeconds(20))
+                .header("Accept","application/json").header("User-Agent","CarInquiry/2.0")
+                .header("Content-Type","application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(form(params))).build();
+        return http.send(request,HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    private Map<String,Object> parsePayload(HttpResponse<byte[]> response,String action)throws Exception{
+        if(response.statusCode()!=200)throw new IllegalStateException(action+"接口 HTTP 状态异常："+response.statusCode());
+        if(response.body().length>1_048_576)throw new IllegalStateException(action+"接口响应内容过大");
+        Map<String,Object> payload=mapper.readValue(response.body(),new TypeReference<LinkedHashMap<String,Object>>(){});
+        log.info("[ProviderCall] action={}, status={}, bytes={}, keys={}",action,response.statusCode(),response.body().length,payload.keySet());
+        return payload;
+    }
+
     private Map<String,String> buildSignedParams(Map<String,Object> provider,Map<String,Object> input,String apiVersion)throws Exception{
+        input=new LinkedHashMap<>(input);
+        input.remove("callback");
         Map<String,String>params=new LinkedHashMap<>();
         String authType=String.valueOf(provider.getOrDefault("auth_type","none"));
-        log.info("[BuildParams] authType={}, input={}, apiVersion={}", authType, input, apiVersion);
-
-        // 提取 callback 参数（不参与签名，但需要添加到请求中）
-        String callbackValue=null;
-        Object callbackObj=input.get("callback");
-        if(callbackObj!=null){
-            callbackValue=String.valueOf(callbackObj).trim();
-            if(callbackValue.isBlank())callbackValue=null;
-        }
+        log.debug("[BuildParams] authType={}, inputKeys={}, apiVersion={}",authType,input.keySet(),apiVersion);
 
         if("sign_md5".equals(authType)){
             Map<String,Object>config=crypto.decrypt(String.valueOf(provider.getOrDefault("config_cipher","")));
@@ -401,33 +243,29 @@ public class ProviderService {
             // 优先使用服务级版本覆盖，否则使用供应商默认版本
             String version=!apiVersion.isBlank()?apiVersion:String.valueOf(config.getOrDefault("version","1.0.0")).trim();
             if(appid.isBlank()||secret.isBlank())throw new IllegalStateException("供应商AppID或Secret未配置");
-            log.info("[BuildParams] appid={}, version={}{}, secret={}", appid, version, !apiVersion.isBlank()?" (服务覆盖)":" (供应商默认)", secret.substring(0,Math.min(4,secret.length()))+"****");
+            log.debug("[BuildParams] appid={}, version={}{}",mask(appid),version,!apiVersion.isBlank()?" (服务覆盖)":" (供应商默认)");
 
             long timestamp=System.currentTimeMillis()/1000;
             params.put("appid",appid);
             params.put("version",version);
             params.put("timestamp",String.valueOf(timestamp));
 
-            // 合并用户输入参数（callback 不参与签名）
+            // 合并用户输入参数
             for(var e:input.entrySet()){
                 String key=e.getKey();
                 String v=String.valueOf(e.getValue()).trim();
-                if("callback".equals(key))continue; // callback 不参与签名
+                if("callback".equals(key))continue; // 禁止调用方重新启用供应商报告回调
                 if(!v.isBlank())params.put(key,v);
             }
 
-            // 生成签名（不含 callback）
+            // 生成签名
             String sign=signMd5(params,secret);
             params.put("sign",sign);
 
-            // 签名后添加 callback 参数到请求中
-            if(callbackValue!=null){
-                params.put("callback",callbackValue);
-            }
-            log.info("[BuildParams] 最终参数={}, sign={}", params, sign);
+            log.debug("[BuildParams] 参数构建完成 keys={}",params.keySet());
         }else{
             for(var e:input.entrySet())params.put(e.getKey(),String.valueOf(e.getValue()));
-            log.info("[BuildParams] 无签名，参数={}", params);
+            log.debug("[BuildParams] 无签名参数 keys={}",params.keySet());
         }
 
         return params;
@@ -454,7 +292,7 @@ public class ProviderService {
         TreeMap<String,String> sorted=new TreeMap<>(params);
         sorted.put("secret",secret);
 
-        // 移除空值（callback 已在调用方排除）
+        // 移除空值
         sorted.values().removeIf(v->v==null||v.isBlank());
 
         // 按 key ASCII 排序，value URL-encode，拼接
@@ -467,13 +305,11 @@ public class ProviderService {
         }
 
         String signStr=sb.toString();
-        log.info("[SignMD5] 签名字符串={}", signStr);
 
         // MD5 → 大写
         MessageDigest md=MessageDigest.getInstance("MD5");
         byte[] digest=md.digest(signStr.getBytes(StandardCharsets.UTF_8));
         String sign=String.format("%032x",new BigInteger(1,digest)).toUpperCase();
-        log.info("[SignMD5] 签名结果={}", sign);
         return sign;
     }
 
@@ -482,10 +318,8 @@ public class ProviderService {
         HttpResponse<byte[]> response=http.send(builder.build(),HttpResponse.BodyHandlers.ofByteArray());
         if(response.statusCode()!=200)throw new IllegalStateException("供应商 HTTP 状态异常："+response.statusCode());
         if(response.body().length>1_048_576)throw new IllegalStateException("供应商响应内容过大");
-        String responseBody=new String(response.body(),StandardCharsets.UTF_8);
-        log.info("[ExecuteAndParse] 响应 body={}", responseBody);
         Map<String,Object> payload=mapper.readValue(response.body(),new TypeReference<LinkedHashMap<String,Object>>(){});
-        log.info("[ExecuteAndParse] 解析后 payload={}", payload);
+        log.info("[ExecuteAndParse] 响应 status={}, bytes={}, keys={}",response.statusCode(),response.body().length,payload.keySet());
         String codePath=String.valueOf(service.getOrDefault("response_code_path","code")).trim();
         String success=String.valueOf(service.getOrDefault("response_success_value","200"));
         String code=codePath.isBlank()?success:String.valueOf(path(payload,codePath));
@@ -516,17 +350,33 @@ public class ProviderService {
                 data=resultFallback;
             }
         }
-        log.info("[ExecuteAndParse] data={}", data);
+        log.debug("[ExecuteAndParse] dataType={}, dataKeys={}",data==null?"null":data.getClass().getSimpleName(),data instanceof Map<?,?>m?m.keySet():Set.of());
         if(!(data instanceof Map<?,?> map)){
-            log.error("[ExecuteAndParse] 数据格式无效，期望Map，实际类型={}, 值={}", data==null?"null":data.getClass().getName(), data);
+            log.error("[ExecuteAndParse] 数据格式无效，期望Map，实际类型={}",data==null?"null":data.getClass().getName());
             throw new IllegalStateException("供应商结果数据格式无效");
         }
         List<Map<String,Object>> normalized=normalize(service,cast(map));
-        log.info("[ExecuteAndParse] normalize结果={}", normalized);
+        log.info("[ExecuteAndParse] normalize完成 itemCount={}",normalized.size());
         return new Result(code.isBlank()?success:code,rid,normalized);
     }
 
-    private void assertPublicHttps(URI uri)throws Exception{if(!"https".equalsIgnoreCase(uri.getScheme())||uri.getHost()==null||uri.getUserInfo()!=null)throw new IllegalStateException("查询接口必须使用无账号信息的 HTTPS 地址");String host=uri.getHost().toLowerCase();if(host.equals("localhost")||host.endsWith(".local"))throw new IllegalStateException("查询接口地址不安全");InetAddress[]addresses=InetAddress.getAllByName(host);if(addresses.length==0)throw new IllegalStateException("查询接口域名无法解析");for(InetAddress a:addresses)if(a.isAnyLocalAddress()||a.isLoopbackAddress()||a.isLinkLocalAddress()||a.isSiteLocalAddress()||a.isMulticastAddress())throw new IllegalStateException("查询接口禁止访问内网地址");}
+    private void assertPublicHttps(URI uri)throws Exception{assertProviderUri(uri,false);}
+    private void assertProviderUri(URI uri,boolean allowHttp)throws Exception{
+        if(cn.naiblog.carsearch.security.TestNetworkGuard.enabled()){
+            if(!cn.naiblog.carsearch.security.TestNetworkGuard.allowedSupplier(uri))throw new IllegalStateException("本地隔离测试已拦截真实供应商请求");
+            if("127.0.0.1".equals(uri.getHost())&&"http".equals(uri.getScheme()))return;
+        }
+        String scheme=uri.getScheme()==null?"":uri.getScheme().toLowerCase(Locale.ROOT);
+        if((!"https".equals(scheme)&&!(allowHttp&&"http".equals(scheme)))||uri.getHost()==null||uri.getUserInfo()!=null)
+            throw new IllegalStateException(allowHttp?"查询接口必须使用无账号信息的 HTTP/HTTPS 地址":"查询接口必须使用无账号信息的 HTTPS 地址");
+        int port=uri.getPort();
+        if(port!=-1&&port!=80&&port!=443)throw new IllegalStateException("查询接口端口不在允许范围");
+        String host=uri.getHost().toLowerCase(Locale.ROOT);
+        if(host.equals("localhost")||host.endsWith(".local"))throw new IllegalStateException("查询接口地址不安全");
+        InetAddress[]addresses=InetAddress.getAllByName(host);
+        if(addresses.length==0)throw new IllegalStateException("查询接口域名无法解析");
+        for(InetAddress a:addresses)if(a.isAnyLocalAddress()||a.isLoopbackAddress()||a.isLinkLocalAddress()||a.isSiteLocalAddress()||a.isMulticastAddress())throw new IllegalStateException("查询接口禁止访问内网地址");
+    }
     URI withQuery(URI u,Map<String,Object> input)throws Exception{Map<String,String> q=new LinkedHashMap<>();if(u.getRawQuery()!=null)for(String part:u.getRawQuery().split("&",-1)){String[] p=part.split("=",2);q.put(URLDecoder.decode(p[0],StandardCharsets.UTF_8),p.length>1?URLDecoder.decode(p[1],StandardCharsets.UTF_8):"");}input.forEach((k,v)->q.put(k,String.valueOf(v)));return withEncodedQuery(u,form(q));}
     URI withoutQueryKeys(URI u,Set<String>remove)throws Exception{Map<String,String>q=new LinkedHashMap<>();if(u.getRawQuery()!=null)for(String part:u.getRawQuery().split("&",-1)){String[]p=part.split("=",2);String key=URLDecoder.decode(p[0],StandardCharsets.UTF_8);if(!remove.contains(key))q.put(key,p.length>1?URLDecoder.decode(p[1],StandardCharsets.UTF_8):"");}return withEncodedQuery(u,q.isEmpty()?null:form(q));}
     private URI withEncodedQuery(URI u,String encodedQuery)throws Exception{String path=u.getRawPath()==null||u.getRawPath().isBlank()?"/":u.getRawPath();StringBuilder target=new StringBuilder().append(u.getScheme()).append("://").append(u.getRawAuthority()).append(path);if(encodedQuery!=null&&!encodedQuery.isBlank())target.append('?').append(encodedQuery);return new URI(target.toString());}
@@ -534,7 +384,7 @@ public class ProviderService {
     private Object path(Object value,String path){return path(value,path,true);}
     /** @param keepList true=最终List取第一个元素(默认), false=保留完整List */
     private Object path(Object value,String path,boolean keepList){
-        log.debug("[Path] 提取路径={}, 输入={}, keepList={}", path, value, keepList);
+        log.debug("[Path] 提取路径={}, keepList={}",path,keepList);
         String[]segments=path.split("\\.");
         for(int i=0;i<segments.length;i++){
             String s=segments[i];
@@ -565,7 +415,7 @@ public class ProviderService {
             value=list.getFirst();
             log.debug("[Path] 最终结果是List，取第一个元素");
         }
-        log.debug("[Path] 提取结果={}", value);
+        log.debug("[Path] 提取完成 path={}, resultType={}",path,value==null?"null":value.getClass().getSimpleName());
         return value;
     }
     /** fetchReport 扁平维修标志 → 官方 *_repair_detail 嵌套结构（键对：扁平键, 嵌套键） */
@@ -616,8 +466,7 @@ public class ProviderService {
 
     public List<Map<String,Object>> normalize(Map<String,Object> service,Map<String,Object> data)throws Exception{
         String schemaJson=String.valueOf(service.get("result_schema"));
-        log.info("[Normalize] result_schema={}", schemaJson);
-        log.info("[Normalize] 原始数据 keys={}, data={}", data.keySet(), data);
+        log.debug("[Normalize] service={}, schemaBytes={}, dataKeys={}",service.get("code"),schemaJson.length(),data.keySet());
         Map<String,Object> schema=mapper.readValue(schemaJson,new TypeReference<LinkedHashMap<String,Object>>(){});
         // 收集数组子字段映射：X[].field 归属 X[] 分组，配置顺序即展示顺序
         Map<String,List<String[]>> groupFields=new LinkedHashMap<>();
@@ -642,7 +491,7 @@ public class ProviderService {
                 // 普通字段：单值提取（原有逻辑）
                 Object raw=path(data,actualKey);
                 Object v=ResultValueFormatter.format(String.valueOf(service.get("code")),key,raw);
-                log.info("[Normalize] key={}, raw={}, formatted={}", key, raw, v);
+                log.debug("[Normalize] key={}, valueType={}",key,v==null?"null":v.getClass().getSimpleName());
                 if(v instanceof String s)v=truncate(s,2000);
                 Map<String,Object> item=new LinkedHashMap<>();
                 item.put("key",key);item.put("label",e.getValue());
@@ -657,15 +506,36 @@ public class ProviderService {
                 out.add(arrayItem(data,group.substring(0,group.length()-2),group,"查询数据",g.getValue()));
             }
         }
-        log.info("[Normalize] 最终结果 count={}, data={}", out.size(), out);
+        applyTransferEmptyRecordText(service,data,out);
+        log.info("[Normalize] 完成 service={}, itemCount={}",service.get("code"),out.size());
         return out;
     }
+    /** Supplier-confirmed meaning: successful transfer report with data=[] means no transfer record yet. */
+    private void applyTransferEmptyRecordText(Map<String,Object> service,Map<String,Object> report,List<Map<String,Object>> items){
+        boolean transfer=apiPathEquals(service.get("fetch_api_path"),"/Car/transferReport")
+                ||apiPathEquals(service.get("api_path"),"/Car/transferOrder");
+        if(!transfer||QueryStatusResolver.resolve(report)!=QueryStatusResolver.SUCCESS)return;
+        if(!(report.get("data") instanceof List<?> records)||!records.isEmpty())return;
+        for(Map<String,Object> item:items){
+            if(!Set.of("data[]","data").contains(String.valueOf(item.get("key"))))continue;
+            item.put("label","过户记录");
+            item.put("value","该车辆目前暂未出现过户记录");
+        }
+    }
+    private boolean apiPathEquals(Object configured,String expected){
+        if(configured==null)return false;
+        try{
+            String path=new URI(String.valueOf(configured).trim()).getPath();
+            if(path==null)return false;
+            return expected.equals(path.startsWith("/")?path:"/"+path);
+        }catch(URISyntaxException ignored){return false;}
+    }
     /** schema 键容错：去掉方括号前的空格（如 "tab []"→"tab[]"），避免路径带尾空格查不到数据 */
-    private static String schemaKey(Object key){return String.valueOf(key).replace(" []","[]").trim();}
+    private static String schemaKey(Object key){return ResultSchemaPath.canonical(key);}
     /** 构建数组展示项：无子字段映射时原样展示整组（兼容旧配置），有映射时按配置字段逐行提取 */
     private Map<String,Object> arrayItem(Map<String,Object> data,String actualKey,String key,String label,List<String[]>fields){
         Object raw=path(data,actualKey,false);
-        log.info("[Normalize] 数组字段 key={}, raw={}, 子字段数={}", key, raw, fields==null?0:fields.size());
+        log.debug("[Normalize] 数组字段 key={}, valueType={}, 子字段数={}",key,raw==null?"null":raw.getClass().getSimpleName(),fields==null?0:fields.size());
         Map<String,Object> item=new LinkedHashMap<>();
         item.put("key",key);item.put("label",label);
         if(raw instanceof List<?>list){
@@ -700,6 +570,12 @@ public class ProviderService {
         }
         return item;
     }
-    @SuppressWarnings("unchecked")private Map<String,Object> cast(Map<?,?>m){return(Map<String,Object>)m;}private String truncate(String s,int n){return s.codePointCount(0,s.length())<=n?s:s.substring(0,s.offsetByCodePoints(0,n));}
+    @SuppressWarnings("unchecked")private Map<String,Object> cast(Map<?,?>m){return(Map<String,Object>)m;}private String truncate(String s,int n){if(s==null)return"";return s.codePointCount(0,s.length())<=n?s:s.substring(0,s.offsetByCodePoints(0,n));}
+    private String mask(String value){String v=value==null?"":value.trim();if(v.length()<=6)return v.isBlank()?"":"***";return v.substring(0,3)+"***"+v.substring(v.length()-3);}
+    private int number(Object value){try{return value instanceof Number n?n.intValue():Integer.parseInt(String.valueOf(value));}catch(Exception ignored){return 0;}}
     public record Result(String code,String requestId,List<Map<String,Object>> data){}
+    public record SubmitResult(String businessCode,String requestId){}
+    public enum FetchState{RUNNING,SUCCESS,FAILED,NO_DATA}
+    public record FetchResult(FetchState state,String businessCode,String requestId,List<Map<String,Object>> data,String message){}
+    public record BalanceResult(java.math.BigDecimal balance,String businessCode){}
 }

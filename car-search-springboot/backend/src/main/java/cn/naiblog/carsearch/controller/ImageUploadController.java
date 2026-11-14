@@ -29,6 +29,7 @@ import java.util.*;
 public class ImageUploadController {
     private static final Logger log = LoggerFactory.getLogger(ImageUploadController.class);
     private static final Set<String> ALLOWED_TYPES = Set.of("image/jpeg", "image/png", "image/webp");
+    private static final Set<String> ALLOWED_CATEGORIES = Set.of("general", "license", "idcard");
     private static final long MAX_SIZE = 5 * 1024 * 1024; // 5MB
     private static final int MIN_WIDTH = 100;
     private static final int MAX_WIDTH = 4096;
@@ -61,8 +62,10 @@ public class ImageUploadController {
             @RequestParam(value = "type", defaultValue = "general") String type,
             HttpServletRequest request) {
         CurrentUser user = api.user(request);
-        log.info("[ImageUpload] 用户={}, type={}, filename={}, size={}",
-                user.id(), type, file.getOriginalFilename(), file.getSize());
+        if (!ALLOWED_CATEGORIES.contains(type)) {
+            throw new BusinessException("图片分类无效");
+        }
+        log.info("[ImageUpload] 用户={}, type={}, size={}", user.id(), type, file.getSize());
 
         // 验证文件
         if (file.isEmpty()) {
@@ -113,8 +116,10 @@ public class ImageUploadController {
 
         // 创建目录并保存文件
         try {
-            Path targetDir = uploadDir.resolve(type).resolve(dateDir);
-            Files.createDirectories(targetDir);
+            Path targetDir = uploadDir.resolve(type).resolve(dateDir).normalize();
+            if (!targetDir.startsWith(uploadDir)) {
+                throw new BusinessException("文件路径无效");
+            }
             Path target = targetDir.resolve(filename).normalize();
 
             // 安全检查：确保目标路径在上传目录内
@@ -122,8 +127,9 @@ public class ImageUploadController {
                 throw new BusinessException("文件路径无效");
             }
 
+            Files.createDirectories(targetDir);
             Files.write(target, data);
-            log.info("[ImageUpload] 文件已保存: {}", target);
+            log.info("[ImageUpload] 文件已保存: type={}, date={}, file={}", type, dateDir, filename);
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {

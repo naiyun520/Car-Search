@@ -1,6 +1,6 @@
 # Car Search Spring Boot + UniApp 重构版
 
-本目录是现有 PHP + UniApp 项目的并行重构，不覆盖旧系统。
+本目录提供 Spring Boot 后端、管理后台和 UniApp 小程序。所有查询统一通过数据库持久化任务执行。
 
 ## 目录
 
@@ -8,7 +8,7 @@
 - `miniapp/`：UniApp 微信小程序（迁移阶段保持原接口协议）。
 - `MIGRATION.md`：业务兼容范围和迁移进度。
 
-新后端直接兼容现有 MySQL `ci_*` 表和 AES-256-GCM 密文格式。迁移完成前不要让新旧后端同时执行支付对账、供应商查询或清理定时任务。
+后端沿用 MySQL `ci_*` 表和 AES-256-GCM 密文格式。付款后创建任务，两步查询统一主动获取报告，与一次查询共用完成处理；不再回退到请求线程直接查询。`CAR_QUERY_JOBS_ENABLED=false` 仅暂停调度，`query_job_enabled` 不再决定执行方式。切换前先暂停下单并核清未完成订单，不能同时运行两套后端定时任务。
 
 ## 启动后端
 
@@ -55,7 +55,7 @@ cd E:\XY_MZF\Car-Search\car-search-springboot\miniapp
 npm run dev:mp-weixin
 ```
 
-开发模式自动使用 `http://127.0.0.1:8080/api/v1`，生产构建仍使用 `https://car.naiblog.cn/api/v1`。
+开发与生产构建默认都使用 `https://car.naiblog.cn/api/v1`（分别来自 `.env.development` 与 `.env.production`）。如需连接其他测试服务器，请在构建前通过 `VITE_API_BASE_URL` 显式覆盖。
 
 本机 `.env.local` 默认设置 `CAR_DEV_LOGIN_ENABLED=true`，用于在缺少可解密微信 AppSecret 时联调“我的”和订单页面。该模式只接受来自 `127.0.0.1` 或 `::1` 的登录请求，不能完成真实微信支付；部署测试服或生产环境时必须删除此变量或明确设置为 `false`，并配置可用的微信 AppID、AppSecret。
 

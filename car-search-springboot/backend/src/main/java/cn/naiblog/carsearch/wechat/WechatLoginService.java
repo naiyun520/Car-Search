@@ -33,6 +33,7 @@ public class WechatLoginService {
     }
 
     public Session codeToSession(String code) {
+        cn.naiblog.carsearch.security.TestNetworkGuard.blockExternalWechat();
         SettingService.WechatConfig config = settings.wechat();
         if (config.appId().isBlank() || config.appSecret().isBlank())
             throw new BusinessException(503, HttpStatus.SERVICE_UNAVAILABLE, "微信登录暂未配置");

@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** 结果保留期：一级查询结果生成后保留 24 小时，二级查询长期可查看 */
+/** 所有查询结果自生成后统一保留 24 小时。 */
 class CheckoutServiceRetentionTest {
     private final JdbcTemplate jdbc=mock(JdbcTemplate.class);
     private final CryptoService crypto=mock(CryptoService.class);
@@ -88,12 +88,11 @@ class CheckoutServiceRetentionTest {
     }
 
     @Test
-    void asyncQueryNeverExpires(){
+    void asyncQueryAlsoExpiresAfter24Hours(){
         stubCrypto();
         Map<String,Object> r=service.detail(order("SNAP_ASYNC",LocalDateTime.now().minusDays(10)));
-        assertEquals("permanent",r.get("result_retention"));
-        assertNotNull(r.get("result"));
-        assertNull(r.get("result_expires_at"));
-        assertNull(r.get("result_expired"));
+        assertEquals("limited",r.get("result_retention"));
+        assertEquals(Boolean.TRUE,r.get("result_expired"));
+        assertFalse(r.containsKey("result"));
     }
 }

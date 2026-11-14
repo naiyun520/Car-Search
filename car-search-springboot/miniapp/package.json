@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev:mp-weixin": "uni -p mp-weixin",
-    "build:mp-weixin": "uni build -p mp-weixin"
+    "build:mp-weixin": "uni build -p mp-weixin && node scripts/verify-wechat-build.mjs",
+    "test:update": "node --test tests/update-manager.test.mjs",
+    "test": "node --test tests/update-manager.test.mjs tests/transfer-empty-report.test.mjs tests/task-fulfillment.test.mjs tests/order-list.test.mjs tests/report-loader.test.mjs tests/wechat-build.test.mjs"
   },
   "dependencies": {
     "@dcloudio/uni-app": "3.0.0-alpha-5020320260731001",
@@ -13,6 +15,7 @@
   },
   "devDependencies": {
     "@dcloudio/vite-plugin-uni": "3.0.0-alpha-5020320260731001",
+    "acorn": "8.18.0",
     "sass": "^1.77.0",
     "vite": "5.2.8"
   }

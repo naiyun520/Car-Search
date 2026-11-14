@@ -23,15 +23,19 @@
         <view class="price">¥ {{ priceText(item.amount) }}</view>
       </view>
     </view>
-    <view class="empty" v-else><view class="empty-mark"><view/></view><view>{{ emptyTitle }}</view><text>{{ emptyHint }}</text></view>
+    <view class="empty" v-else-if="!listState.loading && !listState.error"><view class="empty-mark"><view/></view><view>{{ emptyTitle }}</view><text>{{ emptyHint }}</text></view>
+    <view class="list-feedback" v-if="listState.loading">正在加载订单…</view>
+    <view class="list-feedback retry" v-else-if="listState.error" @click="retryLoad">{{ listState.error }} · 点击重试</view>
+    <view class="list-feedback" v-else-if="orders.length && listState.finished">没有更多订单了</view>
   </view>
 </template>
 <script setup>
-import { computed, ref } from 'vue'
-import { onLoad, onShow, onShareAppMessage } from '@dcloudio/uni-app'
+import { computed, reactive } from 'vue'
+import { onLoad, onShow, onReachBottom, onShareAppMessage } from '@dcloudio/uni-app'
 import { request } from '../../utils/request'
 import { API_BASE_URL } from '../../config'
 import { serviceIcon } from '../../utils/service-icons'
+import { createOrderPager } from '../../utils/order-list'
 
 // 分享配置
 onShareAppMessage(() => ({
@@ -42,12 +46,20 @@ onShareAppMessage(() => ({
 const STATUS_TEXT={pending_payment:'待付款',success:'已完成',paid:'待履约',query_failed:'未查询到信息',querying:'处理中',payment_review:'待核对',refunded:'已退款',refunding:'退款中',cancelled:'已取消'}
 // 分类口径与后端 OrderController.STATUS_GROUPS、「我的」页四项统计一致
 const TABS=[{key:'all',label:'全部'},{key:'unpaid',label:'待付款'},{key:'querying',label:'查询中'},{key:'success',label:'已完成'},{key:'closed',label:'已关闭'}]
-const orders=ref([])
-const group=ref('all')
+const listState=reactive({})
+const pager=createOrderPager(args=>request(`/orders?group=${encodeURIComponent(args.group)}&page=${args.page}&page_size=${args.page_size}`),listState)
+const orders=computed(()=>listState.orders)
+const group=computed({get:()=>listState.group,set:value=>{listState.group=value}})
 onLoad(options=>{const g=String(options?.group||'');if(TABS.some(t=>t.key===g))group.value=g})
-onShow(load)
-function switchGroup(key){if(group.value===key)return;group.value=key;load()}
-async function load(){try{const data=await request(`/orders?group=${group.value}`);orders.value=data.data||[]}catch(error){uni.showToast({title:error.message||'订单加载失败',icon:'none'})}}
+onShow(()=>{
+  const saved=String(uni.getStorageSync('orders_tab_group')||'')
+  uni.removeStorageSync('orders_tab_group')
+  if(TABS.some(t=>t.key===saved)&&saved!==group.value) return pager.reset(saved)
+  return pager.refresh()
+})
+onReachBottom(()=>pager.more())
+function switchGroup(key){if(group.value!==key)pager.reset(key)}
+function retryLoad(){return pager.retry()}
 const emptyTitle=computed(()=>group.value==='all'?'暂无订单记录':`暂无${TABS.find(t=>t.key===group.value)?.label||''}订单`)
 const emptyHint=computed(()=>group.value==='all'?'完成付款后，订单记录会显示在这里':'切换上方分类可查看其他订单')
 const iconUrl=item=>serviceIcon(item.service_icon,API_BASE_URL,item.service_code)
@@ -57,14 +69,13 @@ function priceText(value){const n=Number(value);return Number.isFinite(n)?n.toFi
 function refundText(value){return ({requesting:'退款申请提交中',processing:'退款处理中',refunded:'退款已完成',failed:'退款暂未成功，系统将自动重试'})[value]||'系统将自动退款'}
 function contactService(){uni.switchTab({url:'/pages/my/my'})}
 function goDetail(item){
-  // 待付款/已取消没有查询结果：分别引导支付、提示已关闭，不进入结果页
+  // 未付款仅显示说明，保留原订单记录，不引导生成新订单。
   if(item.status==='pending_payment'){
     return uni.showModal({
-      title:'订单待支付',
-      content:'该订单尚未完成支付，是否前往支付？订单超时后会自动取消。',
-      confirmText:'去支付',
-      cancelText:'暂不',
-      success:result=>{if(result.confirm)uni.navigateTo({url:`/pages/query/query?code=${item.service_code||''}`})}
+      title:'尚未付款',
+      content:'该订单尚未完成付款，未发起查询，也没有查询报告。',
+      showCancel:false,
+      confirmText:'我知道了'
     })
   }
   if(item.status==='cancelled'){
@@ -83,6 +94,7 @@ function showAppleRefund(){
 }
 </script>
 <style lang="scss" scoped>
+.list-feedback{text-align:center;padding:28rpx 12rpx;color:#8a96a8;font-size:24rpx}.list-feedback.retry{color:#2177e8}
 .orders-page{min-height:100vh;padding:14rpx 28rpx 44rpx;background:#f5faff}
 .page-head-bar{display:none}
 /* 状态分类条 */

@@ -86,7 +86,7 @@ onShow(async()=>{
   try{orderStats.value=await request('/orders/stats')}catch(error){console.warn('[orders/stats]',error)}
 })
 function statText(key){const n=Number(orderStats.value[key]||0);return n>99?'99+':String(n)}
-function openOrderGroup(group){uni.navigateTo({url:`/pages/orders/orders?group=${group}`})}
+function openOrderGroup(group){uni.setStorageSync('orders_tab_group',group);uni.navigateTo({url:'/pages/orders/orders'})}
 function openOrders(){uni.navigateTo({url:'/pages/orders/orders'})}
 function openAgreement(){uni.navigateTo({url:'/pages/agreement/agreement'})}
 function openPartner(){

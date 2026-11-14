@@ -28,14 +28,19 @@ public class DatabaseCompatibilityVerifier implements ApplicationRunner {
         required.put("ci_audit_log", List.of("admin_id", "action", "target_type", "target_id", "detail", "ip"));
         required.put("ci_setting", List.of("key", "value"));
         required.put("ci_service_category", List.of("code", "name", "icon", "sort", "status"));
-        required.put("ci_service", List.of("code", "category_id", "payment_product_id_android", "payment_product_id_ios", "sale_price_android", "sale_price_ios", "input_schema", "result_schema", "request_url_cipher"));
+        required.put("ci_service", List.of("code", "category_id", "payment_product_id_android", "payment_product_id_ios", "sale_price_android", "sale_price_ios", "input_schema", "result_schema", "request_url_cipher", "query_job_enabled", "poll_max_attempts"));
+        required.put("ci_provider", List.of("code", "base_url", "config_cipher", "balance_enabled", "balance_mode", "balance_api_path", "balance_value_path", "balance_refresh_minutes"));
         required.put("ci_user", List.of("openid", "session_key_cipher", "status"));
         required.put("ci_user_token", List.of("user_id", "token_hash", "expires_at"));
-        required.put("ci_order", List.of("order_no", "request_key", "input_cipher", "result_cipher", "service_snapshot_cipher", "client_platform", "status", "manual_refund_time"));
+        required.put("ci_order", List.of("order_no", "request_key", "input_cipher", "result_cipher", "service_snapshot_cipher", "client_platform", "status", "manual_refund_time", "user_visible_until", "admin_retention_until", "active_result_revision_id", "fulfillment_version"));
         required.put("ci_payment", List.of("order_id", "order_no", "wechat_order_type", "expected_order_type", "delivery_status", "refund_status", "refund_attempts", "refund_reason"));
         required.put("ci_announcement", List.of("title", "content", "suppress_hours", "status"));
         required.put("ci_wechat_event", List.of("event_key", "event_type", "request_cipher", "response_cipher", "process_status"));
         required.put("ci_email_delivery", List.of("event_key", "event_type", "recipient", "status", "attempts", "next_retry_at"));
+        required.put("ci_query_job", List.of("order_id", "service_id", "job_type", "state", "submit_attempts", "fetch_attempts", "max_fetch_attempts", "next_run_at", "deadline_at", "locked_until"));
+        required.put("ci_provider_call", List.of("order_id", "job_id", "stage", "call_status", "billing_status", "cost_amount", "started_at"));
+        required.put("ci_provider_balance_snapshot", List.of("provider_id", "balance", "source", "status", "observed_at"));
+        required.put("ci_order_result_revision", List.of("order_id", "result_cipher", "change_reason", "status", "created_by"));
 
         for (Map.Entry<String, List<String>> entry : required.entrySet()) {
             for (String column : entry.getValue()) {

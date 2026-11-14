@@ -19,7 +19,7 @@ function renderProviderList() {
           const url = escapeHtml(row.base_url || '-')
           return `<tr>
             <td><button class="action provider-sort" data-id="${row.id}" data-move="-1" ${index === 0 ? 'disabled' : ''}>↑</button><button class="action provider-sort" data-id="${row.id}" data-move="1" ${index === providerRows.length - 1 ? 'disabled' : ''}>↓</button></td>
-            <td><b>${escapeHtml(row.name)}</b></td>
+            <td><b>${escapeHtml(row.name)}</b>${Number(row.status) === 1 && Number(row.balance_enabled) === 1 && row.balance_mode === 'independent_api' ? `<small class="table-sub">余额：${row.latest_balance_status === 'success' ? escapeHtml(String(row.latest_balance)) : '暂不可用'}<br>${escapeHtml(row.latest_balance_at || '')}</small>` : `<small class="table-sub">${row.balance_mode==='independent_api'?'余额查询未启用':'未提供余额接口'}</small>`}</td>
             <td><code>${escapeHtml(row.code)}</code></td>
             <td>${escapeHtml(authLabel(row.auth_type))}</td>
             <td class="endpoint-cell">${url}</td>
@@ -27,7 +27,7 @@ function renderProviderList() {
             <td><span class="tag ${row.appid_configured ? 'success' : 'fail'}">${row.appid_configured ? '已配置' : '未配置'}</span></td>
             <td><span class="tag ${row.secret_configured ? 'success' : 'fail'}">${row.secret_configured ? '已配置' : '未配置'}</span></td>
             <td>${statusLabel(row.status)}</td>
-            <td><button class="action edit-provider" data-id="${row.id}">编辑</button><button class="action danger delete-provider" data-id="${row.id}">删除</button></td>
+            <td>${Number(row.status) === 1 && Number(row.balance_enabled) === 1 && row.balance_mode === 'independent_api' ? `<button class="action refresh-balance" data-id="${row.id}">刷新余额</button>` : ''}<button class="action edit-provider" data-id="${row.id}">编辑</button><button class="action danger delete-provider" data-id="${row.id}">删除</button></td>
           </tr>`
         }).join('') || '<tr><td colspan="10" class="empty">暂无供应商</td></tr>'}
       </tbody></table></div>
@@ -43,6 +43,12 @@ function renderProviderList() {
       const provider = providerRows.find(row => String(row.id) === String(edit.dataset.id))
       if (!provider) return toast('供应商数据已失效，请刷新页面')
       return openProviderEditor(provider)
+    }
+    const refresh = event.target.closest('.refresh-balance')
+    if (refresh) {
+      refresh.disabled = true
+      try { const result = await api(`/providers/${refresh.dataset.id}/balance/refresh`, { method: 'POST' }); toast(result.status === 'success' ? `余额已更新：${result.balance}` : (result.message || '余额暂不可用')) } catch (error) { toast(error.message || '余额刷新失败') } finally { await loaders.providers() }
+      return
     }
     const remove = event.target.closest('.delete-provider')
     if (!remove || !confirm('确定删除该供应商？有关联服务时系统会拒绝删除。')) return
@@ -92,6 +98,16 @@ function openProviderEditor(provider) {
               <label>AppID ${isEdit ? configuredBadge(item.appid_configured) : ''}<input name="appid" type="password" autocomplete="new-password" placeholder="留空保持原值"></label>
               <label>Secret ${isEdit ? configuredBadge(item.secret_configured) : ''}<input name="secret" type="password" autocomplete="new-password" placeholder="留空保持原值"></label>
               <label>版本号<input name="version" value="${escapeHtml(item.version || '1.0.0')}" placeholder="1.0.0"></label>
+            </div>
+          </div>
+          <div class="form-section"><h4>余额查询（可选）</h4><p class="hint">默认关闭。仅供应商明确提供独立余额接口时启用；不会影响订单履约。</p>
+            <div class="form-grid three">
+              <label>启用余额查询<select name="balance_enabled"><option value="0" ${Number(item.balance_enabled) === 1 ? '' : 'selected'}>否</option><option value="1" ${Number(item.balance_enabled) === 1 ? 'selected' : ''}>是</option></select></label>
+              <label>模式<select name="balance_mode"><option value="unsupported" ${(item.balance_mode || 'unsupported') === 'unsupported' ? 'selected' : ''}>不支持</option><option value="independent_api" ${item.balance_mode === 'independent_api' ? 'selected' : ''}>独立接口</option></select></label>
+              <label>刷新间隔（分钟）<input name="balance_refresh_minutes" type="number" min="1" max="1440" value="${escapeHtml(item.balance_refresh_minutes || 10)}"></label>
+              <label>接口路径<input name="balance_api_path" value="${escapeHtml(item.balance_api_path || '')}" placeholder="例如 /InterfaceClient/getBalance"></label>
+              <label>接口版本<input name="balance_api_version" value="${escapeHtml(item.balance_api_version || '')}" placeholder="例如 1.0.0"></label>
+              <label>余额字段路径<input name="balance_value_path" value="${escapeHtml(item.balance_value_path || '')}" placeholder="例如 result.balance"></label>
             </div>
           </div>
           <div id="provider-form-error" class="form-error"></div>

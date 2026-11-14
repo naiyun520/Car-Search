@@ -52,6 +52,7 @@ public class MailService {
 
     private JavaMailSenderImpl sender() {
         String host = settings.value("smtp_host", "").trim();
+        cn.naiblog.carsearch.security.TestNetworkGuard.checkMail(host);
         String from = settings.value("smtp_from_address", "").trim();
         if (host.isBlank() || from.isBlank()) throw new IllegalStateException("邮件服务未配置完整");
         JavaMailSenderImpl sender = new JavaMailSenderImpl();

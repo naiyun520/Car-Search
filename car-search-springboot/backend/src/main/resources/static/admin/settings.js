@@ -1,5 +1,14 @@
+let settingsSection='general',settingsRequest=0
+loaders.settingsGeneral=()=>{settingsSection='general';return loaders.settings()}
+loaders.settingsPayment=()=>{settingsSection='payment';return loaders.settings()}
+loaders.settingsEmail=()=>{settingsSection='email';return loaders.settings()}
+loaders.settingsSecurity=()=>{settingsSection='security';return loaders.settings()}
+window.settingsDirty=false
+window.addEventListener('beforeunload',e=>{if(window.settingsDirty){e.preventDefault();e.returnValue=''}})
 loaders.settings = async () => {
+  const requestedPage=currentPage,requestId=++settingsRequest
   const [settings, payment, email] = await Promise.all([api('/settings'), api('/payment-settings'), api('/email-settings')])
+  if(currentPage!==requestedPage||requestId!==settingsRequest)return
   const configured = value => `<span class="tag ${value ? 'success' : 'fail'}">${value ? '已配置' : '未配置'}</span>`
   const messageCallbackUrl = `${location.origin}${payment.message_callback_path || '/wechat/message'}`
   $('#content').innerHTML = `
@@ -12,7 +21,7 @@ loaders.settings = async () => {
           <label>隐私规则生效日期<input name="privacy_effective_date" type="date" value="${escapeHtml(settings.privacy_effective_date || '')}" required></label>
           <label>客服电话<input name="customer_service_phone" value="${escapeHtml(settings.customer_service_phone || '')}"></label>
           <label>客服时间<input name="customer_service_hours" value="${escapeHtml(settings.customer_service_hours || '')}"></label>
-          <label>查询数据保留天数<input name="privacy_retention_days" type="number" min="1" max="365" value="${escapeHtml(settings.privacy_retention_days || 30)}"><small class="field-note">用于履约、异常排查和售后；到期由每日清理任务删除</small></label>
+          <label>查询数据保留天数<input name="privacy_retention_days" type="number" min="180" max="180" readonly value="${escapeHtml(settings.privacy_retention_days || 180)}"><small class="field-note">用于履约、异常排查和售后；到期由每日清理任务删除</small></label>
           <label>后台访问地址<input name="admin_path" value="${escapeHtml(settings.admin_path || 'admin')}" pattern="[a-z][a-z0-9-]{2,31}" maxlength="32" required><small class="field-note">默认 admin；保存后仅可通过 /新地址/ 进入，根域名不会跳转后台</small></label>
         </div>
         <label>免责声明<textarea name="disclaimer">${escapeHtml(settings.disclaimer || '')}</textarea></label>
@@ -91,12 +100,34 @@ loaders.settings = async () => {
       <p class="hint">数据库地址、数据库账号和主加密密钥由安装向导写入服务器 <code>.env</code>。它们决定系统能否启动和历史密文能否解密，因此管理后台不会读取、展示或在线修改。需要迁移服务器时，请由服务器管理员安全迁移该文件。</p>
     </div>`
 
+  const paymentForm=$('#payment-settings')
+  const message=document.createElement('details');message.className='settings-disclosure'
+  message.innerHTML='<summary><b>消息推送与退款通知</b><span>展开配置 Token、加密密钥与接收地址</span></summary><div class="disclosure-body form-grid"></div>'
+  for(const name of ['wechat_message_token','wechat_message_aes_key'])message.querySelector('.disclosure-body').append(paymentForm.querySelector('[name='+name+']').closest('label'))
+  for(const hint of Array.from(paymentForm.children).filter(x=>x.classList.contains('hint'))){
+   if(hint.textContent.includes('退款通知必须配置'))message.querySelector('.disclosure-body').append(hint)
+   else {const help=document.createElement('details');help.className='settings-disclosure';help.innerHTML='<summary><b>在哪里获取这些支付参数？</b></summary>';help.append(hint);paymentForm.insertBefore(help,paymentForm.querySelector('button[type=submit]'))}
+  }
+  paymentForm.insertBefore(message,paymentForm.querySelector('.form-section'))
+  const ios=paymentForm.querySelector('.form-section'),iosDetails=document.createElement('details');iosDetails.className='settings-disclosure'
+  iosDetails.innerHTML='<summary><b>iOS 退款问询回复模板</b><span>展开修改履约证据与自动回复</span></summary>';ios.replaceWith(iosDetails);iosDetails.append(ios)
+  paymentForm.addEventListener('invalid',e=>{for(let p=e.target.parentElement;p&&p!==paymentForm;p=p.parentElement)if(p.tagName==='DETAILS')p.open=true},true)
+  const groups={general:['general-settings'],payment:['payment-settings','android-auto-refund-settings'],email:['email-settings'],security:['password-form']}
+  const panels=Array.from($('#content').children)
+  for(const p of panels){const form=p.querySelector('form');p.hidden=form?!groups[settingsSection].includes(form.id):settingsSection!=='security'}
+  $('#content').classList.add('settings-workspace')
+  panels.forEach(p=>p.classList.add('settings-card'))
+  $('#content').oninput=()=>{window.settingsDirty=true}
+  const banner=document.createElement('div');banner.className='settings-intro'
+  const intros={general:['运营资料','把联系方式与隐私说明维护准确，让用户找得到你。'],payment:['支付与消息配置','支付凭证、消息接收与退款策略。敏感值留空时保留已有配置。'],email:['业务通知','重要事件及时送达。先保存配置，再按需测试发送。'],security:['账户与部署安全','修改密码会使所有管理端登录失效。']}
+  banner.innerHTML='<span class="eyebrow">系统设置</span><h1>'+intros[settingsSection][0]+'</h1><p>'+intros[settingsSection][1]+'</p>'
+  $('#content').prepend(banner)
   $('#general-settings').onsubmit = async event => {
     event.preventDefault()
     const values=Object.fromEntries(new FormData(event.target))
     const oldPath=String(settings.admin_path||'admin')
     const result=await api('/settings', { method: 'POST', data: { settings: values } })
-    toast('运营设置已保存')
+    window.settingsDirty=false;toast('运营设置已保存')
     if(result?.admin_path&&result.admin_path!==oldPath){localStorage.removeItem('admin_token');setTimeout(()=>location.assign(`/${encodeURIComponent(result.admin_path)}/`),600)}
   }
   $('#payment-settings').onsubmit = async event => {
@@ -107,7 +138,7 @@ loaders.settings = async () => {
     button.textContent='正在保存...'
     try{
       await api('/payment-settings', { method: 'POST', data: Object.fromEntries(new FormData(event.target)) })
-      toast('支付配置已安全保存')
+      window.settingsDirty=false;toast('支付配置已安全保存')
       await loaders.settings()
     }catch(error){
       toast(error.message||'支付配置保存失败')
@@ -119,7 +150,7 @@ loaders.settings = async () => {
     event.preventDefault()
     const values=Object.fromEntries(new FormData(event.target))
     await api('/android-auto-refund-settings', { method: 'POST', data: values })
-    toast(values.enabled==='1'?'安卓自动退款已开启':'安卓自动退款已关闭')
+    window.settingsDirty=false;toast(values.enabled==='1'?'安卓自动退款已开启':'安卓自动退款已关闭')
     await loaders.settings()
   }
   $('#email-settings').onsubmit = async event => {
@@ -130,7 +161,7 @@ loaders.settings = async () => {
     button.textContent='正在保存...'
     try{
       await api('/email-settings', { method: 'POST', data: Object.fromEntries(new FormData(event.target)) })
-      toast('邮件配置已保存')
+      window.settingsDirty=false;toast('邮件配置已保存')
       await loaders.settings()
     }catch(error){
       toast(error.message||'邮件配置保存失败')
@@ -155,7 +186,7 @@ loaders.settings = async () => {
   $('#password-form').onsubmit = async event => {
     event.preventDefault()
     await api('/password', { method: 'POST', data: Object.fromEntries(new FormData(event.target)) })
-    alert('密码已修改，请重新登录')
+    window.settingsDirty=false;alert('密码已修改，请重新登录')
     logout()
   }
 }

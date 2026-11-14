@@ -60,7 +60,6 @@ function openCategoryEditor(category){const item=category||{code:'',name:'',icon
 
 function openServiceTest(service) {
   if (!service.api_url_configured && !(Number(service.provider_api_id)>0 && service.api_path)) return toast('请先编辑并保存完整接口 URL 或选择供应商并填写接口路径')
-  const isCallbackMode = service.callback_mode === 'callback'
   const fields=(service.input_schema||[]).map(field=>{
     if(field.type==='select'&&Array.isArray(field.options)){
       const opts=field.options.map(o=>`<option value="${escapeHtml(o.value)}" ${o.value===field.default?'selected':''}>${escapeHtml(o.label)}</option>`).join('')
@@ -68,69 +67,26 @@ function openServiceTest(service) {
     }
     return `<label>${escapeHtml(field.label)}${field.required?' <span class="required-mark">*</span>':''}<input class="test-input" data-key="${escapeHtml(field.key)}" placeholder="请输入有效${escapeHtml(field.label)}" maxlength="100" ${field.required?'required':''}></label>`
   }).join('')
-  const callbackSection = isCallbackMode ? `
-    <div class="detail-block" style="margin-top:16px;border:1px solid #b8d4e8;border-radius:8px;padding:16px;background:#f0f7fc">
-      <h4 style="margin:0 0 8px">模拟回调测试</h4>
-      <p class="hint" style="margin:0 0 12px">回调模式下，真实测试会返回「处理中」状态。可用此功能模拟供应商回调，验证数据解析和订单更新流程，不产生任何接口费用。</p>
-      <div class="form">
-        <label>query_id（下单后返回）<input id="simulate-query-id" placeholder="从上方测试结果的供应商请求ID复制" maxlength="100"></label>
-        <label>回调 Body（JSON）<textarea id="simulate-body" rows="8" style="font-family:monospace;font-size:12px" placeholder='{
-  "number": "200",
-  "result": {
-    "brand": "宝马",
-    "vin": "WBANE31089B123456",
-    "content": [{"maintain_time":"1648310400","maintain_mileage":"50000"}]
-  }
-}'></textarea></label>
-        <div class="drawer-actions" style="padding:0"><button type="button" class="primary run-simulate-callback">模拟回调</button></div>
-      </div>
-      <div id="simulate-result"></div>
-    </div>` : ''
 
-  $('#service-editor').innerHTML=`<div class="dialog-mask"><div class="dialog-card service-test-dialog"><div class="drawer-head"><div><h3>测试接口：${escapeHtml(service.name)}</h3><p>${escapeHtml(service.code)} · 走正式订单相同的请求与解析链路${isCallbackMode?' · <span class="tag success">回调模式</span>':''}</p></div><button class="drawer-close" type="button">×</button></div><div class="dialog-body"><div class="service-test-warning">警告：测试会真实调用供应商接口，可能产生接口费用。请使用已授权的合法测试数据。</div><form id="service-test-form" class="form"><div class="form-grid">${fields}</div><div class="drawer-actions"><button type="button" class="secondary test-cancel">关闭</button><button type="submit" class="primary run-service-test">${isCallbackMode?'下单并获取 query_id':'开始测试'}</button></div></form><div id="service-test-result"></div>${callbackSection}</div></div></div>`
+  $('#service-editor').innerHTML=`<div class="dialog-mask"><div class="dialog-card service-test-dialog"><div class="drawer-head"><div><h3>测试接口：${escapeHtml(service.name)}</h3><p>${escapeHtml(service.code)} · 走正式订单相同的请求与解析链路</p></div><button class="drawer-close" type="button">×</button></div><div class="dialog-body"><div class="service-test-warning">此入口仅允许在本地隔离环境使用假数据供应商。任务提交后，请在订单管理查看处理进度。</div><form id="service-test-form" class="form"><div class="form-grid">${fields}</div><div class="drawer-actions"><button type="button" class="secondary test-cancel">关闭</button><button type="submit" class="primary run-service-test">开始测试</button></div></form><div id="service-test-result"></div></div></div></div>`
   const close=()=>{$('#service-editor').innerHTML=''}
   $('#service-editor .drawer-close').onclick=close
   $('#service-editor .test-cancel').onclick=close
 
-  // 模拟回调按钮
-  if(isCallbackMode){
-    $('.run-simulate-callback').onclick=async()=>{
-      const queryId=$('#simulate-query-id').value.trim()
-      const bodyText=$('#simulate-body').value.trim()
-      const resultNode=$('#simulate-result')
-      if(!queryId)return toast('请填写 query_id')
-      if(!bodyText)return toast('请填写回调 Body JSON')
-      let body
-      try{body=JSON.parse(bodyText)}catch(e){return toast('回调 Body JSON 格式错误: '+e.message)}
-      resultNode.innerHTML='<div class="page-loading compact-loading"><span></span><p>正在模拟回调...</p></div>'
-      try{
-        const result=await api(`/callback-simulate/${encodeURIComponent(service.id)}`,{method:'POST',data:{query_id:queryId,body},timeout:15000})
-        resultNode.innerHTML=`<div class="detail-block" style="border-color:#52c41a"><h4>模拟回调成功</h4><div class="detail-data"><div><span>query_id</span><b>${escapeHtml(result.query_id)}</b></div><div><span>ci_query 状态</span><b><span class="tag success">${escapeHtml(result.ci_query_status)}</span></b></div><div><span>更新订单数</span><b>${result.orders_updated}</b></div></div><div class="hint" style="margin-top:8px">订单数据已更新，可在订单管理中查看结果。</div></div>`
-      }catch(error){resultNode.innerHTML=`<div class="service-test-error">${escapeHtml(error.message||'模拟回调失败')}</div>`}
-    }
-  }
-
   $('#service-test-form').onsubmit=async event=>{
     event.preventDefault()
-    if(!confirm('本次操作将真实调用供应商接口，可能产生费用。确认继续？'))return
+    if(!confirm('确认创建假数据测试任务？'))return
     const button=event.currentTarget.querySelector('.run-service-test')
     const resultNode=$('#service-test-result')
     const input={}
     event.currentTarget.querySelectorAll('.test-input').forEach(node=>{input[node.dataset.key]=node.value})
-    button.disabled=true;button.textContent='测试中...';resultNode.innerHTML='<div class="page-loading compact-loading"><span></span><p>正在请求供应商...</p></div>'
+    button.disabled=true;button.textContent='测试中...';resultNode.innerHTML='<div class="page-loading compact-loading"><span></span><p>正在提交测试任务...</p></div>'
     try{
       const result=await api(`/service-test/${encodeURIComponent(service.id)}`,{method:'POST',data:{input},timeout:35000})
-      const state=result.success?'<span class="tag success">测试成功</span>':result.provider_code==='processing'?'<span class="tag wait">等待回调</span>':'<span class="tag fail">测试失败</span>'
-      const diagnostics=`<div class="detail-data"><div><span>测试结果</span><b>${state}</b></div><div><span>耗时</span><b>${escapeHtml(result.duration_ms??'-')} ms</b></div><div><span>供应商业务码</span><b>${escapeHtml(result.provider_code||'-')}</b></div><div><span>供应商请求ID</span><b>${escapeHtml(result.provider_request_id||'-')}</b></div></div>`
-      const extraHint=result.provider_code==='processing'?`<div class="hint" style="margin-top:8px">回调模式：供应商已接收请求，处理完成后会推送结果。上方「模拟回调测试」区域可输入此 query_id 进行模拟。</div>`:''
-      resultNode.innerHTML=`<div class="detail-block"><h4>诊断结果</h4>${diagnostics}${result.success?`<h4 class="test-data-title">解析后数据</h4><div class="detail-data">${detailItems(result.data)}</div>`:`<div class="service-test-error">${escapeHtml(result.error||'供应商查询未成功')}</div>`}${extraHint}</div>`
-      // 自动填充 query_id 到模拟回调区域
-      if(isCallbackMode&&result.provider_request_id){
-        const qidInput=$('#simulate-query-id')
-        if(qidInput&&!qidInput.value)qidInput.value=result.provider_request_id
-      }
+      if(result.queued){resultNode.innerHTML='<div class="hint">测试任务已提交。订单号：'+escapeHtml(result.order_no)+'。请在订单管理搜索此订单，查看结果与履约诊断。不会在页面中循环请求供应商。</div>';return}
+      throw new Error("测试任务未创建，请刷新页面后重试")
     }catch(error){resultNode.innerHTML=`<div class="service-test-error">${escapeHtml(error.message||'接口测试请求失败')}</div>`}
-    finally{button.disabled=false;button.textContent=isCallbackMode?'再次下单':'再次测试'}
+    finally{button.disabled=false;button.textContent='提交新的测试任务'}
   }
 }
 
@@ -164,7 +120,7 @@ function openServiceEditor(service) {
         <label>iOS支付道具ID<input name="payment_product_id_ios" value="${escapeHtml(item.payment_product_id_ios||'')}" placeholder="Apple 支付道具ID"><small class="field-note">道具价格必须与iOS售价一致</small></label>
         <label>服务名称<input name="name" value="${escapeHtml(item.name)}" required></label>
         <label>前端简称<input name="short_name" value="${escapeHtml(item.short_name)}" required></label>
-        <label>内置服务图标<select name="builtin_icon">${builtinIcons.map(icon=>`<option value="${icon[0]}" ${String(item.icon).replace(/^builtin:/,'')===icon[0]?'selected':''}>${icon[1]}</option>`).join('')}</select><small class="field-note">也可在下一项上传自定义图片覆盖</small></label>
+        <label>内置服务图标<select name="builtin_icon">${currentIcon?'<option value="" selected>保留当前上传图标</option>':''}${builtinIcons.map(icon=>`<option value="${icon[0]}" ${String(item.icon).replace(/^builtin:/,'')===icon[0]?'selected':''}>${icon[1]}</option>`).join('')}</select><small class="field-note">也可在下一项上传自定义图片覆盖</small></label>
         <label>自定义图标<input name="icon_file" type="file" accept="image/png,image/jpeg,image/webp"><small class="field-note">${currentIcon?`<img class="service-icon-preview" src="${currentIcon}" alt="当前图标"> 当前图标；选择新文件后保存替换`:'PNG、JPG 或 WebP，32-1024像素，最大75KB'}</small></label>
         <label>安卓售价（元）<input name="sale_price_android" type="number" min="1" step="0.01" value="${item.sale_price_android}" required></label>
         <label>iOS售价（元）<input name="sale_price_ios" type="number" min="1" step="0.01" value="${item.sale_price_ios}" required><small class="field-note">Apple 支付最低1元，需与iOS道具价格一致</small></label>
@@ -181,29 +137,19 @@ function openServiceEditor(service) {
       <div class="provider-path-section" style="${Number(item.provider_api_id)>0?'':'display:none'}">
         <label>接口路径（下单接口）<input name="api_path" value="${escapeHtml(item.api_path||'')}" placeholder="/NewEnergy/createOrder"><small class="field-note">拼接在供应商基础 URL 之后的路径</small></label>
         <label>下单接口版本号<input name="api_version" value="${escapeHtml(item.api_version||'')}" placeholder="如 1.0.0，留空使用供应商默认"><small class="field-note">留空则使用供应商配置中的默认版本号</small></label>
-        <label>获取报告接口版本号<input name="fetch_api_version" value="${escapeHtml(item.fetch_api_version||'')}" placeholder="如 2.0.0，留空则同下单版本"><small class="field-note">异步/回调模式的第二步接口版本，留空则使用下单接口版本号</small></label>
+        <label>获取报告接口版本号<input name="fetch_api_version" value="${escapeHtml(item.fetch_api_version||'')}" placeholder="如 2.0.0，留空则同下单版本"><small class="field-note">两步查询的获取报告接口版本，留空则使用下单接口版本号</small></label>
       </div>
       <div class="form-grid three"><label>查询模式<select name="query_mode" class="query-mode-select"><option value="single" ${(item.query_mode||'single')==='single'?'selected':''}>单步查询（同步）</option><option value="async" ${item.query_mode==='async'?'selected':''}>异步两步查询（下单→获取报告）</option></select></label><label>请求方式<select name="request_method"><option ${item.request_method==='GET'?'selected':''}>GET</option><option ${item.request_method==='POST'?'selected':''}>POST</option></select></label><label>业务状态字段路径<input name="response_code_path" value="${escapeHtml(item.response_code_path)}" placeholder="例如 code，留空不校验"></label><label>成功状态值<input name="response_success_value" value="${escapeHtml(item.response_success_value)}" placeholder="例如 200"></label><label>结果数据路径<input name="response_data_path" value="${escapeHtml(item.response_data_path)}" placeholder="例如 data，留空表示整个响应"></label></div>
       <div class="async-config-section" style="${item.query_mode==='async'?'':'display:none'}">
         <div class="form-grid three">
-          <label>获取报告接口路径<input name="fetch_api_path" value="${escapeHtml(item.fetch_api_path||'')}" placeholder="/NewEnergy/fetchReport"><small class="field-note">第二步获取报告的接口路径</small></label>
-          <label>轮询间隔（秒）<input name="poll_interval_sec" type="number" min="2" max="60" value="${item.poll_interval_sec||5}"><small class="field-note">默认5秒，最小2秒</small></label>
-          <label>轮询超时（秒）<input name="poll_timeout_sec" type="number" min="10" max="300" value="${item.poll_timeout_sec||120}"><small class="field-note">默认120秒，最大300秒</small></label>
+          <label>获取报告接口路径<input name="fetch_api_path" value="${escapeHtml(item.fetch_api_path||'')}" placeholder="/NewEnergy/fetchReport"></label>
+          <label>获取间隔（秒）<input name="poll_interval_sec" type="number" min="60" max="3600" value="${Math.max(60,item.poll_interval_sec||60)}"><small class="field-note">默认60秒，首次与后续获取均等待此间隔</small></label>
+          <label>最多获取次数<input name="poll_max_attempts" type="number" min="1" max="100" value="${item.poll_max_attempts??20}"><small class="field-note">默认20次，每次请求计入次数，达到上限停止</small></label>
+          <label>最长等待（秒，可选）<input name="poll_timeout_sec" type="number" min="0" max="86400" value="${item.poll_timeout_sec??0}"><small class="field-note">0表示仅按次数停止；非0应为60-86400秒，先达到的上限生效</small></label>
+          <label>下单返回ID路径<input name="id_field_path" value="${escapeHtml(item.id_field_path||'')}" placeholder="如 result.query_id"><small class="field-note">从下单响应中提取编号，留空按常见字段查找</small></label>
+          <label>报告接口ID参数名<input name="fetch_api_param_name" value="${escapeHtml(item.fetch_api_param_name||'')}" placeholder="query_id（默认）、code_id 或 order_id"><small class="field-note">使用已保存的下单编号，不重新下单</small></label>
         </div>
-        <div class="hint">异步两步查询模式：第一步调用下单接口获取 query_id，第二步轮询获取报告接口直到成功或超时。</div>
-      </div>
-
-      <div class="async-config-section" style="border-color:#b8d4e8;background:#f0f7fc">
-        <div class="form-grid three">
-          <label>回调模式<select name="callback_mode" class="callback-mode-select"><option value="none" ${(item.callback_mode||'none')==='none'?'selected':''}>不使用回调</option><option value="callback" ${item.callback_mode==='callback'?'selected':''}>回调模式（推荐）</option></select></label>
-          <label>回调签名令牌<input name="callback_secret" value="${escapeHtml(item.callback_secret||'')}" placeholder="可选，用于验证回调签名"><small class="field-note">供应商回调时的签名验证令牌</small></label>
-          <label>回调超时（秒）<input name="callback_timeout_sec" type="number" min="30" max="600" value="${item.callback_timeout_sec||120}"><small class="field-note">超时后自动降级轮询供应商，默认120秒</small></label>
-        </div>
-        <div class="form-grid three">
-          <label>下单返回ID路径<input name="id_field_path" value="${escapeHtml(item.id_field_path||'')}" placeholder="如 result.query_id 或 task_id"><small class="field-note">供应商下单接口返回的ID字段路径，留空则自动尝试常见字段名</small></label>
-          <label>报告接口ID参数名<input name="fetch_api_param_name" value="${escapeHtml(item.fetch_api_param_name||'')}" placeholder="query_id（默认）或 order_id"><small class="field-note">降级轮询报告接口时传递ID的参数名，默认 query_id</small></label>
-        </div>
-        <div class="hint">回调模式：下单时传入回调地址，供应商处理完成后主动推送结果。超时未收到回调则自动降级轮询供应商。比纯轮询更省接口调用次数。<br>「下单返回ID路径」用于从下单响应中提取唯一标识（如 query_id），支持点号路径（如 result.order_id）。留空则自动尝试 query_id、code_id、order_id、task_id 等常见字段。<br>「报告接口ID参数名」用于降级轮询时传递查询ID的参数名，部分供应商使用 order_id 而非 query_id。</div>
+        <div class="hint">每个业务独立设置。下单成功后按间隔主动获取报告，达到次数或最长等待上限即停止，管理员核对处理。下单结果不确定时不会自动重新下单。</div>
       </div>
       </div>
 
@@ -235,7 +181,7 @@ function openServiceEditor(service) {
       if (pathSection) pathSection.style.display = isProvider ? '' : 'none'
     }
   }
-  // 查询模式切换：显示/隐藏异步配置区域和回调配置区域
+  // 查询模式切换：显示/隐藏主动获取报告配置
   const queryModeSelect = $('select[name="query_mode"]')
   if (queryModeSelect) {
     queryModeSelect.onchange = () => {
@@ -264,17 +210,15 @@ function openServiceEditor(service) {
       fields.api_version=(fields.api_version||'').trim()
       fields.fetch_api_version=(fields.fetch_api_version||'').trim()
       fields.fetch_api_path=(fields.fetch_api_path||'').trim()
-      fields.callback_mode=fields.callback_mode||'none'
-      fields.callback_secret=(fields.callback_secret||'').trim()
-      fields.callback_timeout_sec=Number(fields.callback_timeout_sec||120)
       fields.id_field_path=(fields.id_field_path||'').trim()
       fields.fetch_api_param_name=(fields.fetch_api_param_name||'').trim()
-      fields.poll_interval_sec=Number(fields.poll_interval_sec||5)
-      fields.poll_timeout_sec=Number(fields.poll_timeout_sec||120)
+      fields.poll_interval_sec=Number(fields.poll_interval_sec||60)
+      fields.poll_timeout_sec=Number(fields.poll_timeout_sec||0)
+      fields.poll_max_attempts=Number(fields.poll_max_attempts||20)
       fields.input_schema=[...$('#input-fields').querySelectorAll('.schema-row')].map(row=>{
         const schema={key:row.querySelector('.field-key').value.trim(),label:row.querySelector('.field-label').value.trim(),type:row.querySelector('.field-type').value,required:row.querySelector('.field-required').checked}
         if(schema.type==='select'){
-          try{schema.options=JSON.parse(row.querySelector('.field-options').value.trim())}catch(e){schema.options=[]}
+          try{schema.options=JSON.parse(row.querySelector('.field-options').value.trim())}catch(e){const index=[...row.parentElement.children].indexOf(row)+1;const error=new Error('用户输入字段第'+index+'行：“'+(schema.label||schema.key||'下拉选择')+'”的选项内容格式不正确。请使用选项数组，例如 [{"value":"1","label":"是"}]。');error.details={section:'用户输入字段',row:index,field:'options'};showAdminError(error);throw error}
           const def=row.querySelector('.field-default')?.value.trim();if(def)schema.default=def
         }
         return schema
@@ -293,7 +237,8 @@ function openServiceEditor(service) {
       toast(service?'接口服务已保存':'接口服务已创建')
       close(); await loaders.services()
     } catch(error) {
-      errorNode.textContent=error.message||'接口服务保存失败'
+      showAdminError(error)
+      errorNode.textContent=error.message||'接口服务保存失败，请检查当前编辑内容'
       errorNode.scrollIntoView({behavior:'smooth',block:'center'})
       toast(error.message||'保存失败')
     } finally { button.disabled=false;button.textContent='保存接口服务' }

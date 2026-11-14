@@ -4,34 +4,45 @@
       <view class="safe-top" />
       <view class="brand-row">
         <view class="brand-icon"><image src="/static/images/app-avatar.png" mode="aspectFit" /></view>
-        <view><view class="brand-name">车档查</view><view class="brand-slogan">专业车辆数据查询平台</view></view>
+        <view class="brand-copy"><view class="brand-name">车档查</view><view class="brand-slogan">专业车辆数据查询平台</view></view>
       </view>
     </view>
 
     <view class="content">
       <view class="hero-banner">
         <image class="hero-image" src="/static/images/home-hero.jpg" mode="aspectFill" />
-        <view class="hero-copy"><view class="hero-tags"><text class="hero-tag primary">官方认证</text><text class="hero-tag">权威数据</text></view><view class="hero-title">查询车辆档案，<text>看清真实车况</text></view><view class="hero-desc">全方位车况查询 让每一次交易更安心</view><view class="hero-trust"><view><image src="/static/icons/features/complete.svg" />车辆信息</view><view><image src="/static/icons/features/complete.svg" />维保记录</view><view><image src="/static/icons/features/complete.svg" />历史里程</view><view><image src="/static/icons/features/complete.svg" />事故记录</view></view></view>
+        <view class="hero-copy">
+          <view class="hero-tags">
+            <text class="hero-tag primary">官方认证</text><text class="hero-tag">权威数据</text>
+            <button class="demo-tag" hover-class="demo-tag-hover" @click="openDemoReport">
+              <text>报告示例</text><text class="demo-tag-arrow">›</text>
+            </button>
+          </view>
+          <view class="hero-title">查询车辆档案，<text>看清真实车况</text></view>
+          <view class="hero-desc">全方位车况查询 让每一次交易更安心</view>
+          <view class="hero-trust"><view><image src="/static/icons/features/complete.svg" />车辆信息</view><view><image src="/static/icons/features/complete.svg" />维保记录</view><view><image src="/static/icons/features/complete.svg" />历史里程</view><view><image src="/static/icons/features/complete.svg" />事故记录</view></view>
+        </view>
       </view>
 
       <view class="service-panel card">
         <view class="section-head"><view class="section-title">全部服务</view><text class="section-more">{{ filteredServices.length }} 项服务</text></view>
-        <view class="category-wrap"><view class="category" v-for="category in categories" :key="category.code" :class="{ active: categoryCode === category.code }" @click="pickCategory(category.code)">{{ category.name }}</view><view class="category" :class="{ active: categoryCode === '' }" @click="pickCategory('')">全部</view></view>
-        <view class="more-grid" v-if="filteredServices.length"><view class="service-item" v-for="service in filteredServices" :key="service.code" @click="openService(service)"><view class="service-icon" :class="{ off: service.status === 0 }"><image :src="iconUrl(service)" mode="aspectFit" /></view><view class="service-name">{{ introOf(service).title }}</view></view></view>
-        <view v-else class="empty">该分类下暂无服务</view>
-      </view>
-
-      <view class="example-card card">
-        <view class="example-title">一份报告，了解车辆历史</view>
-        <view class="example-desc">新能源电池报告示例，提前了解报告内容与结构</view>
-        <view class="example-grid">
-          <view class="example-item"><view class="example-icon"><image src="/static/icons/services/document.svg" mode="aspectFit" /></view><view class="example-item-text"><view class="example-item-title">电池参数信息</view><view class="example-item-sub">类型、容量与厂商</view></view></view>
-          <view class="example-item"><view class="example-icon"><image src="/static/icons/services/verified.svg" mode="aspectFit" /></view><view class="example-item-text"><view class="example-item-title">续航与健康度</view><view class="example-item-sub">标称续航、SOH 等级</view></view></view>
-          <view class="example-item"><view class="example-icon"><image src="/static/icons/services/search.svg" mode="aspectFit" /></view><view class="example-item-text"><view class="example-item-title">里程核验记录</view><view class="example-item-sub">月度里程趋势等</view></view></view>
-          <view class="example-item"><view class="example-icon"><image src="/static/icons/services/shield.svg" mode="aspectFit" /></view><view class="example-item-text"><view class="example-item-title">安全风险评估</view><view class="example-item-sub">衰退速率与风险解析</view></view></view>
+        <view class="search-box">
+          <view class="search-icon" />
+          <input v-model="keyword" confirm-type="search" placeholder="搜索你需要的查询服务" />
+          <button v-if="keyword" class="search-clear" hover-class="search-clear-hover" @click="keyword = ''">清除</button>
         </view>
-        <button class="example-btn" @click="openDemoReport">查看报告示例 <text>→</text></button>
-        <view class="example-shot"><image src="/static/images/report.jpg" mode="aspectFill" /></view>
+        <view class="category-wrap"><view class="category" :class="{ active: categoryCode === '' }" @click="pickCategory('')">全部</view><view class="category" v-for="category in categories" :key="category.code" :class="{ active: categoryCode === category.code }" @click="pickCategory(category.code)">{{ category.name }}</view></view>
+        <view class="more-grid" v-if="filteredServices.length">
+          <view class="service-item" v-for="service in filteredServices" :key="service.code" @click="openService(service)">
+            <view class="service-icon" :class="{ off: service.status === 0 }"><image :src="iconUrl(service)" mode="aspectFit" /></view>
+            <view class="service-name">{{ introOf(service).title }}</view>
+            <view class="service-summary">{{ introOf(service).intro }}</view>
+            <button class="service-action" :class="{ 'service-action-disabled': service.status !== 1 }" :disabled="service.status !== 1" hover-class="service-action-hover" @click.stop="openService(service)">
+              <text>{{ service.status === 1 ? '立即查询' : '维护中' }}</text><view v-if="service.status === 1" class="service-action-arrow"><view /></view>
+            </button>
+          </view>
+        </view>
+        <view v-else class="empty">{{ keyword.trim() ? '未找到匹配服务，试试其他关键词或分类' : '该分类下暂无服务' }}</view>
       </view>
 
     </view>
@@ -88,13 +99,19 @@ const announcement = ref(null)
 const showAnnouncement = ref(false)
 const suppress = ref(false)
 const categoryCode = ref('')
+const keyword = ref('')
 let categoryTouched = false
 const BOOTSTRAP_CACHE_KEY = 'bootstrap_cache_v3'
 
 const filteredServices = computed(() => {
-  return services.value.filter(service =>
-    !categoryCode.value || service.category_code === categoryCode.value
-  )
+  const query = keyword.value.trim().toLowerCase()
+  return services.value.filter(service => {
+    if (categoryCode.value && service.category_code !== categoryCode.value) return false
+    if (!query) return true
+    const intro = serviceIntro(service)
+    return [service.name, service.short_name, service.code, intro.title, intro.intro, ...(intro.tags || [])]
+      .filter(Boolean).join(' ').toLowerCase().includes(query)
+  })
 })
 
 function introOf(service) { return serviceIntro(service) }
@@ -107,7 +124,7 @@ function applyBootstrap(data, allowAnnouncement = true) {
   services.value = data.services
   categories.value = data.categories
   // 默认选中第一个子分类（后端按 sort,id 排序，即 id 最小的分类），用户手动点过后不再覆盖
-  if (!categoryTouched && !categoryCode.value && categories.value.length) categoryCode.value = categories.value[0].code
+  // 首次进入始终展示全部服务，刷新保留用户选择。
   announcement.value = data.announcement || null
   uni.setStorage({ key: 'app_settings', data: data.settings || {} })
   if (allowAnnouncement && data.announcement) {
@@ -216,4 +233,35 @@ function closeAnnouncement(fromButton) {
 .home{min-height:100vh;background:#f4f8fd}.home-head{padding:0 36rpx 24rpx;background:#eaf4ff}.safe-top{height:calc(var(--status-bar-height) + 56rpx)}.brand-row{position:static;display:flex;align-items:center;gap:18rpx}.brand-icon{width:72rpx;height:72rpx;border-radius:18rpx;overflow:hidden;box-shadow:0 8rpx 18rpx rgba(34,115,220,.18)}.brand-icon image{width:100%;height:100%}.brand-name{color:#1c3154;font-size:37rpx;font-weight:700;line-height:1.2}.brand-slogan{margin-top:5rpx;color:#71839c;font-size:21rpx;opacity:1}.content{padding:0 26rpx 64rpx;margin:0}.hero-banner{position:relative;height:322rpx;overflow:hidden;border-radius:22rpx;background:#d6eaff;box-shadow:0 12rpx 28rpx rgba(30,105,190,.1)}.hero-banner .hero-image{position:absolute;inset:0;width:100%;height:100%;opacity:.55}.hero-banner::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.8) 0%,rgba(255,255,255,.5) 32%,rgba(255,255,255,0) 58%)}.hero-copy{position:relative;z-index:1;padding:28rpx}.hero-tags{display:flex;align-items:center;gap:12rpx}.hero-tag{display:inline-flex;align-items:center;height:38rpx;padding:0 16rpx;border-radius:10rpx;background:rgba(23,120,238,.12);color:#1778ee;font-size:20rpx;font-weight:600}.hero-tag.primary{background:#1778ee;color:#fff}.hero-banner .hero-title{margin:12rpx 0 0;color:#172e58;font-size:44rpx;font-weight:800;line-height:1.25;letter-spacing:0;white-space:nowrap}.hero-banner .hero-title text{color:#1778ee}.hero-banner .hero-desc{margin:10rpx 0 0;color:#355277;font-size:28rpx;letter-spacing:0;opacity:1}.hero-trust{display:flex;flex-wrap:wrap;gap:12rpx;margin-top:22rpx}.hero-trust view{display:flex;align-items:center;gap:6rpx;padding:10rpx 16rpx;border:1rpx solid rgba(255,255,255,.75);border-radius:13rpx;background:rgba(255,255,255,.5);backdrop-filter:blur(12rpx);-webkit-backdrop-filter:blur(12rpx);color:#1f3c63;font-size:21rpx;font-weight:700;white-space:nowrap}.hero-trust image{width:28rpx;height:28rpx}.tool-card,.service-panel{margin-top:24rpx;padding:28rpx 24rpx;border:1rpx solid #edf2f8;border-radius:22rpx;background:#fff;box-shadow:0 8rpx 28rpx rgba(30,91,160,.05)}.section-head{align-items:center;margin:0}.section-title{color:#21395f;font-size:32rpx;font-weight:700;letter-spacing:0}.section-more{color:#8a9ab0;font-size:21rpx}.service-grid,.more-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:26rpx 8rpx;margin-top:26rpx;padding:0}.more-grid{margin-top:40rpx;row-gap:36rpx}.service-item{min-width:0;display:flex;flex-direction:column;align-items:center;gap:10rpx}.service-icon{width:80rpx;height:80rpx;border-radius:21rpx;background:#fff}.service-icon.off{filter:grayscale(.6);opacity:.6}.service-icon image{width:80rpx;height:80rpx}.service-name{width:100%;overflow:hidden;color:#30405b;font-size:21rpx;line-height:1.35;text-align:center;text-overflow:ellipsis;white-space:nowrap}.empty{padding:48rpx 0;color:#9ba9bb;font-size:23rpx;text-align:center}.recommend-card{position:relative;display:flex;min-height:270rpx;margin-top:24rpx;padding:48rpx 28rpx 26rpx;overflow:hidden;border-radius:22rpx;background:linear-gradient(120deg,#eff7ff,#d9ebff);box-shadow:0 12rpx 28rpx rgba(26,118,221,.08)}.recommend-tag{position:absolute;top:0;left:0;padding:8rpx 24rpx;border-radius:0 0 14rpx 0;background:#1680f5;color:#fff;font-size:20rpx}.recommend-copy{position:relative;z-index:2;width:56%}.recommend-title{color:#1e467e;font-size:39rpx;font-weight:700}.recommend-desc{display:-webkit-box;overflow:hidden;margin-top:10rpx;color:#59718e;font-size:21rpx;line-height:1.5;-webkit-box-orient:vertical;-webkit-line-clamp:2}.recommend-btn{display:inline-flex;align-items:center;gap:12rpx;margin-top:20rpx;padding:13rpx 26rpx;border-radius:36rpx;background:linear-gradient(90deg,#2784ff,#1265f5);color:#fff;font-size:23rpx}.recommend-btn text{font-size:35rpx;line-height:.6}.report-art{position:absolute;right:12rpx;bottom:16rpx;display:flex;align-items:center}.report-sheet{width:130rpx;height:174rpx;padding:18rpx 13rpx;border-radius:10rpx;background:#fff;box-shadow:0 8rpx 20rpx rgba(42,107,181,.15);transform:rotate(-5deg)}.report-sheet-title{color:#245184;font-size:15rpx;font-weight:700}.report-car{margin:13rpx 0;color:#2b91fc;font-size:39rpx;text-align:center}.report-line{height:5rpx;margin-top:9rpx;border-radius:4rpx;background:#dbe8f6}.report-line.long{width:94%}.report-line.short{width:62%}.report-points{margin-left:10rpx;color:#386691;font-size:17rpx;line-height:2.15}.feature-pair{display:flex;gap:18rpx;margin-top:20rpx}.feature-card{width:50%;min-height:152rpx;padding:20rpx 16rpx;position:relative;display:flex;align-items:flex-start;gap:12rpx;border-radius:20rpx}.feature-icon{width:54rpx;height:54rpx;flex:none;padding:10rpx;border-radius:15rpx;background:#e6f3ff}.feature-icon image{width:100%;height:100%}.feature-main{min-width:0;color:#2a4164;font-size:22rpx;font-weight:700;line-height:1.35}.feature-main text{display:-webkit-box;overflow:hidden;margin-top:6rpx;color:#90a0b3;font-size:17rpx;font-weight:400;-webkit-box-orient:vertical;-webkit-line-clamp:2}.feature-arrow{position:absolute;right:13rpx;bottom:13rpx;color:#7c99ba;font-size:31rpx}.example-card{position:relative;margin:22rpx -10rpx 0;padding:34rpx 30rpx;overflow:hidden;border-radius:22rpx;background:#fff}.example-title{color:#1c3154;font-size:32rpx;font-weight:700}.example-desc{margin-top:12rpx;color:#8298b3;font-size:20rpx}.example-grid{display:grid;grid-template-columns:1fr 1fr;gap:22rpx 16rpx;margin-top:26rpx;width:62%}.example-item{min-width:0;display:flex;align-items:center;gap:12rpx}.example-icon{flex:none;width:40rpx;height:40rpx}.example-icon image{width:100%;height:100%}.example-item-text{min-width:0}.example-item-title{color:#2a4164;font-size:21rpx;font-weight:700;white-space:nowrap}.example-item-sub{margin-top:3rpx;color:#98a7ba;font-size:17rpx;white-space:nowrap}.example-btn{display:inline-flex;align-items:center;height:62rpx;margin:30rpx 0 0;padding:0 30rpx;border:1rpx solid #9cc7f5;border-radius:34rpx;background:#fff;color:#1d6ef0;font-size:22rpx;font-weight:600;line-height:1.2}.example-btn::after{border:0}.example-btn text{margin-left:8rpx;font-size:24rpx}.example-shot{position:absolute;right:16rpx;top:110rpx;width:206rpx;height:276rpx;border:1rpx solid #e3eefb;border-radius:14rpx;overflow:hidden;box-shadow:0 10rpx 26rpx rgba(42,107,181,.2);transform:rotate(6deg)}.example-shot image{display:block;width:100%;height:100%}.service-panel .search-box{height:76rpx;display:flex;align-items:center;margin-top:21rpx;padding:0 18rpx;border-radius:14rpx;background:#f6f9fd}.service-panel .search-icon{margin-right:10rpx;color:#8da2ba;font-size:32rpx}.service-panel .search-box input{flex:1;color:#344963;font-size:22rpx}.service-panel .category-wrap{display:flex;flex-wrap:wrap;gap:14rpx;margin:22rpx 0 0}.service-panel .category{height:64rpx;padding:0 26rpx;border:1rpx solid #e5edf6;border-radius:32rpx;background:#fff;color:#71829a;font-size:24rpx}.service-panel .category.active{border-color:transparent;background:linear-gradient(90deg,#2784ff,#1265f5);color:#fff;box-shadow:0 8rpx 18rpx rgba(18,101,245,.28)}
 
 .example-card{border:1rpx solid #dcecff}
+
+.service-panel .more-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:20rpx;margin-top:26rpx}
+.service-panel .service-item{align-items:stretch;padding:22rpx 18rpx 20rpx;box-sizing:border-box;border:2rpx solid #bcd6fb;border-radius:22rpx;background:linear-gradient(165deg,#fff 55%,#f0f6ff);box-shadow:0 6rpx 20rpx rgba(43,104,190,.06);gap:10rpx}
+.service-panel .service-icon{align-self:center;flex-shrink:0;overflow:hidden;background:transparent}.service-panel .service-icon,.service-panel .service-icon image{width:76rpx;height:76rpx}
+.service-panel .service-name{font-size:28rpx;font-weight:700;text-align:center;white-space:normal;line-height:1.4;color:#203957;min-height:40rpx;display:flex;align-items:center;justify-content:center}
+.service-summary{font-size:24rpx;line-height:1.5;color:#687e99;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;min-height:108rpx}
+.service-panel .service-action{width:100%;min-height:80rpx;margin:auto 0 0;padding:0 18rpx;display:flex;align-items:center;justify-content:center;gap:14rpx;flex-shrink:0;border:1rpx solid #2b72e1;border-radius:14rpx;background:linear-gradient(110deg,#3586f6,#2167d9);box-shadow:0 6rpx 12rpx rgba(38,103,212,.14);color:#fff;font-size:26rpx;font-weight:600;line-height:1.3}
+.service-action::after{border:0}
+.service-action-arrow{display:flex;align-items:center;justify-content:center;width:32rpx;height:32rpx;border-radius:50%;background:rgba(255,255,255,.18)}
+.service-action-arrow view{width:10rpx;height:10rpx;border-top:3rpx solid #fff;border-right:3rpx solid #fff;transform:rotate(45deg);margin-left:-4rpx}
+.service-panel .service-action-hover{background:linear-gradient(110deg,#2675e8,#1658c5);box-shadow:0 2rpx 6rpx rgba(38,103,212,.12)}
+.service-panel .service-action-disabled{border-color:#d9e2ef;background:#edf2f8;box-shadow:none;color:#8a9bb0}
+.service-panel .category-wrap{gap:12rpx;padding:8rpx 0 12rpx}
+.service-panel .category{border:0;background:#eef3fa;color:#60728d;box-shadow:none;font-size:23rpx;height:62rpx;padding:0 24rpx}
+.service-panel .category.active{background:#203e68;color:#fff;box-shadow:0 6rpx 14rpx rgba(32,62,104,.18)}
+.home-head .brand-icon{flex-shrink:0}
+.brand-copy{flex:1;min-width:0}
+.home-head .brand-slogan{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hero-tags .demo-tag{display:flex;align-items:center;justify-content:center;gap:8rpx;flex-shrink:0;min-height:64rpx;margin:-10rpx -8rpx -10rpx auto;padding:0 18rpx;border:1rpx solid rgba(46,125,255,.25);border-radius:32rpx;background:rgba(255,255,255,.78);color:#2569bd;font-size:23rpx;font-weight:600;line-height:1.2;box-shadow:none}
+.demo-tag::after{border:0}
+.demo-tag-arrow{font-size:30rpx;font-weight:400;color:#5a91d3}
+.hero-tags .demo-tag-hover{background:#e2efff}
+.hero-banner .hero-title{font-size:40rpx;line-height:1.35;white-space:normal}
+.service-panel .search-box{height:84rpx;margin-top:24rpx;padding:0 22rpx;border:1rpx solid #e9eff7;border-radius:16rpx;background:#f4f7fb}
+.service-panel .search-box input{min-width:0;font-size:25rpx;line-height:1.5}
+.service-panel .search-icon{position:relative;flex-shrink:0;width:25rpx;height:25rpx;margin-right:20rpx;border:3rpx solid #8a9db5;border-radius:50%;box-sizing:border-box}
+.service-panel .search-icon::after{content:'';position:absolute;right:-10rpx;bottom:-5rpx;width:12rpx;height:3rpx;border-radius:2rpx;background:#8a9db5;transform:rotate(45deg)}
+.search-clear{flex-shrink:0;margin:0 0 0 12rpx;padding:10rpx 0 10rpx 12rpx;background:transparent;color:#6281a4;font-size:23rpx;line-height:1.5}
+.search-clear::after{border:0}
+.search-clear-hover{color:#2468ce}
+.service-panel .category.active{background:#e8f1ff;color:#236ac7;box-shadow:none;font-weight:600}
 </style>

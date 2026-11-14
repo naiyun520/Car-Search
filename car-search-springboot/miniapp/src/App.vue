@@ -1,5 +1,17 @@
 <script>
+import { createUpdatePrompt } from './utils/update-manager'
+
+let updatePrompt
+
 export default {
+  onLaunch() {
+    // #ifdef MP-WEIXIN
+    updatePrompt = createUpdatePrompt(wx)
+    updatePrompt.start()
+    // #endif
+  },
+  onShow() { updatePrompt?.onShow() },
+  onHide() { updatePrompt?.onHide() }
 }
 </script>
 

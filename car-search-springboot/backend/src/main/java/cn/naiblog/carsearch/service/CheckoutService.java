@@ -43,7 +43,7 @@ public class CheckoutService {
             return result(jdbc.queryForMap("select * from ci_order where id=?",id),clientPayment,false);
         }catch(BusinessException|IllegalStateException e){throw e;}catch(Exception e){throw new IllegalStateException("订单创建失败",e);}
     }
-    public Map<String,Object> status(long userId,String no){Map<String,Object>o=owned(userId,no);if(List.of("pending_payment","payment_review").contains(String.valueOf(o.get("status"))))reconciliation.reconcile(o,userRow(userId));return detail(owned(userId,no));}
+    public Map<String,Object> status(long userId,String no){Map<String,Object>o=owned(userId,no);if(List.of("pending_payment","payment_review").contains(String.valueOf(o.get("status"))))reconciliation.reconcile(o,userRow(userId));o=owned(userId,no);if("paid".equals(o.get("status")))queries.run(o);return detail(owned(userId,no));}
     public Map<String,Object> payment(long userId,String no,String requestedPlatform){Map<String,Object>o=owned(userId,no);String platform=payment.normalizePlatform(requestedPlatform);if(requestedPlatform==null||requestedPlatform.isBlank())throw new BusinessException("客户端未提交支付平台，请更新小程序后重试");if(!platform.equals(String.valueOf(o.get("client_platform"))))throw new BusinessException("当前设备平台与订单不一致，请返回服务页重新下单，原订单不会扣款");if(!"pending_payment".equals(o.get("status")))return paymentResult(detail(o),null);Map<String,Object>u=userRow(userId);reconciliation.reconcile(o,u);o=owned(userId,no);if(!"pending_payment".equals(o.get("status")))return paymentResult(detail(o),null);Object exp=o.get("expired_at");if(exp instanceof java.sql.Timestamp t&&t.toLocalDateTime().isBefore(LocalDateTime.now())){jdbc.update("update ci_order set status='cancelled',updated_at=? where id=? and status='pending_payment'",LocalDateTime.now(),o.get("id"));o.put("status","cancelled");return paymentResult(detail(o),null);}Map<String,Object>s=crypto.decrypt(String.valueOf(o.getOrDefault("service_snapshot_cipher","")));if(s.isEmpty())throw new IllegalStateException("订单支付配置快照不可用，请联系客服处理");return paymentResult(safe(o),payment.clientParams(o,u,s));}
     public Map<String,Object> query(long userId,String no){Map<String,Object> o=owned(userId,no);if("paid".equals(o.get("status")))queries.run(o);return detail(owned(userId,no));}
     public Object recoverable(long userId){List<Map<String,Object>> rows=jdbc.queryForList("select * from ci_order where user_id=? and paid_at is not null and status in ('paid','querying','query_failed','success','payment_review') and created_at>=? order by id desc limit 1",userId,LocalDateTime.now().minusHours(24));if(rows.isEmpty())return null;Map<String,Object> d=detail(rows.getFirst());return Boolean.TRUE.equals(d.get("result_expired"))?null:d;}
@@ -66,13 +66,9 @@ public class CheckoutService {
             r.put("message","该查询结果已超过保留期，无法再次查看，如需查看请重新查询。");
         }
         if("success".equals(o.get("status"))&&o.get("result_cipher")!=null){
-            // 二级查询（异步/回调）结果长期可查看；一级查询（单次）结果自生成起仅保留 24 小时
-            boolean longLived=isLongLived(o);
-            LocalDateTime expiresAt=longLived?null:expiryOf(o);
+            LocalDateTime expiresAt=expiryOf(o);
             boolean expired=expiresAt!=null&&!LocalDateTime.now().isBefore(expiresAt);
-            if(longLived){
-                r.put("result_retention","permanent");
-            }else if(expiresAt!=null){
+            if(expiresAt!=null){
                 r.put("result_retention","limited");
                 r.put("result_expires_at",expiresAt.format(MINUTE_FORMAT));
                 r.put("result_remaining_seconds",Math.max(0,Duration.between(LocalDateTime.now(),expiresAt).getSeconds()));
@@ -100,44 +96,31 @@ public class CheckoutService {
             }
         }
         if("payment_review".equals(o.get("status")))r.put("message","支付信息需要人工核对，请勿重复支付并联系客服");
-        // 回调模式：返回 query_id 供前端轮询
+        // 返回已提交编号及任务进度，不暴露原始报告。
         if("querying".equals(String.valueOf(o.get("status")))){
-            String providerRequestId=String.valueOf(o.getOrDefault("provider_request_id",""));
+            String providerRequestId=o.get("provider_request_id")==null?"":String.valueOf(o.get("provider_request_id"));
             if(!providerRequestId.isBlank()){
                 r.put("query_id",providerRequestId);
-                // 获取服务的回调超时时间，估算等待时间
-                int serviceId=o.get("service_id")instanceof Number n?n.intValue():0;
-                if(serviceId>0){
-                    List<Map<String,Object>> services=jdbc.queryForList("select callback_timeout_sec from ci_service where id=?",serviceId);
-                    if(!services.isEmpty()){
-                        int timeoutSec=((Number)services.getFirst().getOrDefault("callback_timeout_sec",120)).intValue();
-                        r.put("estimated_wait",timeoutSec<=60?"1":timeoutSec<=180?"1-3":"3-5");
-                    }
+            }
+            {
+                List<Map<String,Object>> task=jdbc.queryForList("select state,next_run_at,deadline_at,fetch_attempts,max_fetch_attempts from ci_query_job where order_id=?",o.get("id"));
+                if(!task.isEmpty()){
+                    Map<String,Object> job=task.getFirst();
+                    r.put("query_stage",job.get("state"));
+                    r.put("next_check_at",job.get("next_run_at"));
+                    r.put("query_deadline_at",job.get("deadline_at"));
+                    r.put("fetch_attempts",job.get("fetch_attempts"));
+                    r.put("max_fetch_attempts",job.get("max_fetch_attempts"));
                 }
             }
         }
         return r;
     }
     private void delivery(Map<String,Object>o){delivery.deliver(String.valueOf(o.get("order_no")),false);}
-    /** 二级查询（异步/回调）判定：这类结果长期可查看，不受 24 小时有效期约束 */
-    private boolean isLongLived(Map<String,Object> o){
-        String providerRequestId=String.valueOf(o.getOrDefault("provider_request_id",""));
-        if(!providerRequestId.isBlank()&&!"null".equals(providerRequestId))return true;
-        Map<String,Object> snapshot=crypto.decrypt(String.valueOf(o.getOrDefault("service_snapshot_cipher","")));
-        if(!snapshot.isEmpty())return asyncMode(snapshot);
-        // 快照不可解密时退回当前服务配置，避免把二级订单误判成一级而提前过期
-        Object serviceId=o.get("service_id");
-        if(serviceId instanceof Number id){
-            List<Map<String,Object>> rows=jdbc.queryForList("select query_mode,callback_mode from ci_service where id=?",id.longValue());
-            if(!rows.isEmpty())return asyncMode(rows.getFirst());
-        }
-        return false;
-    }
-    private boolean asyncMode(Map<String,Object> s){
-        return "async".equals(String.valueOf(s.getOrDefault("query_mode","single")))||"callback".equals(String.valueOf(s.getOrDefault("callback_mode","none")));
-    }
-    /** 一级查询结果过期时间：结果生成时间(queried_at) + 24 小时，缺失时退回订单创建时间 */
+    /** 所有查询结果统一在生成后 24 小时过期；新订单优先使用数据库快照期限。 */
     private LocalDateTime expiryOf(Map<String,Object> o){
+        LocalDateTime explicit=firstTime(o.get("user_visible_until"));
+        if(explicit!=null)return explicit;
         LocalDateTime generated=firstTime(o.get("queried_at"),o.get("created_at"));
         return generated==null?null:generated.plusHours(RESULT_RETENTION_HOURS);
     }
@@ -155,6 +138,7 @@ public class CheckoutService {
     private Map<String,Object> paymentResult(Object o,Object p){Map<String,Object>r=new LinkedHashMap<>();r.put("order",o);r.put("payment",p);return r;}
     private Map<String,Object> userRow(long id){return jdbc.queryForMap("select * from ci_user where id=?",id);}
     @SuppressWarnings("unchecked") private Map<String,Object> castMap(Object o){return o instanceof Map<?,?> m?(Map<String,Object>)m:Map.of();}
+    private int number(Object value){try{return value instanceof Number n?n.intValue():Integer.parseInt(String.valueOf(value));}catch(Exception ignored){return 0;}}
     private String orderNo(long uid){byte[] b=new byte[4];random.nextBytes(b);return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMddHHmmss"))+String.format("%06d",uid%1_000_000)+HexFormat.of().withUpperCase().formatHex(b);}
     private String mask(String s){int n=s.codePointCount(0,s.length());if(n<=2)return "*".repeat(n);return s.substring(0,s.offsetByCodePoints(0,1))+"*".repeat(Math.min(6,n-2))+s.substring(s.offsetByCodePoints(0,n-1));}
     private String truncate(String s,int n){return s.codePointCount(0,s.length())<=n?s:s.substring(0,s.offsetByCodePoints(0,n));}

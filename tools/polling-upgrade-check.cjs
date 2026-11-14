@@ -1,0 +1,72 @@
+const fs=require('node:fs'),assert=require('node:assert/strict');
+(async()=>{
+ const config=JSON.parse(fs.readFileSync('.local/fulfillment-test/runtime.json','utf8'));
+ const base='http://127.0.0.1:18081';
+ const headers={Authorization:'Bearer '+config.adminToken,'Content-Type':'application/json'};
+ const api=async(path,options={})=>{
+  const response=await fetch(base+path,{...options,headers:{...headers,...options.headers}});
+  const body=await response.json();if(!response.ok||body.code!==0)throw Error(body.message||String(response.status));return body.data;
+ };
+ const all=await api('/admin-api/services'),before=all.find(row=>row.id===30);
+ assert.equal(all.length,31);
+ assert.equal(all.some(row=>row.code.startsWith('local_test_')),false);
+ assert.equal(all.some(row=>'callback_mode' in row||'callback_secret' in row),false);
+ const userHeaders={Authorization:'Bearer '+config.userToken};
+ const first=await api('/api/v1/orders?page=1&page_size=2',{headers:userHeaders});
+ const collected=[...first.data];
+ for(let page=2;page<=first.last_page;page++)collected.push(...(await api('/api/v1/orders?page='+page+'&page_size=2',{headers:userHeaders})).data);
+ assert.equal(new Set(collected.map(row=>row.order_no)).size,first.total);
+ assert.equal(collected.length,first.total);
+ assert.ok(first.total>2);
+ const maxBody={...before,poll_max_attempts:0,builtin_icon:String(before.icon).replace('builtin:','')};
+ const invalid=await fetch(base+'/admin-api/services/30',{method:'POST',headers,body:JSON.stringify(maxBody)});
+ assert.equal(invalid.ok,false);
+ assert.equal((await api('/admin-api/services')).find(row=>row.id===30).poll_max_attempts,20);
+
+ const tab=await fetch('http://127.0.0.1:19333/json/new?'+base+'/localqa/',{method:'PUT'}).then(r=>r.json());
+ const socket=new WebSocket(tab.webSocketDebuggerUrl),pending=new Map(),errors=[];let serial=0;
+ socket.onmessage=event=>{const value=JSON.parse(event.data);if(value.method==='Runtime.exceptionThrown')errors.push(value.params.exceptionDetails.text);if(value.id){pending.get(value.id)?.(value);pending.delete(value.id)}};
+ await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject});
+ const cmd=(method,params={})=>new Promise(resolve=>{const id=++serial;pending.set(id,resolve);socket.send(JSON.stringify({id,method,params}))});
+ const evaluate=async expression=>{const response=await cmd('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(response.result?.exceptionDetails)throw Error(response.result.exceptionDetails.exception?.description||'browser evaluate failed');return response.result?.result?.value};
+ const wait=async expression=>{for(let i=0;i<80;i++){if(await evaluate(expression))return;await new Promise(r=>setTimeout(r,100))}throw Error('Browser timeout: '+expression)};
+ await cmd('Runtime.enable');await cmd('Page.enable');
+ await cmd('Emulation.setDeviceMetricsOverride',{width:1440,height:1040,deviceScaleFactor:1,mobile:false});
+ await wait('document.readyState==="complete"');
+ await evaluate('localStorage.setItem("admin_token",'+JSON.stringify(config.adminToken)+');localStorage.setItem("admin_must_change","0");location.reload();true');
+ await wait('document.querySelectorAll(".dashboard-stats .stat").length===6');
+ await evaluate('document.querySelector("[data-page=services]").click();true');
+ await wait('Array.from(document.querySelectorAll(".edit-service")).some(node=>node.dataset.id==="30")');
+ await evaluate('Array.from(document.querySelectorAll(".edit-service")).find(node=>node.dataset.id==="30").click();true');
+ await wait('document.querySelector("[name=poll_max_attempts]")');
+ assert.equal(await evaluate('document.querySelectorAll("[name=callback_mode], [name=callback_secret], .run-simulate-callback").length'),0);
+ assert.equal(await evaluate('document.querySelector("[name=poll_max_attempts]").value'),'20');
+ assert.equal(await evaluate('document.querySelector("[name=poll_timeout_sec]").value'),'0');
+ await evaluate('document.querySelector("[name=poll_max_attempts]").value="7";document.querySelector("#service-form").requestSubmit();true');
+ try{
+  await wait('!document.querySelector("#service-form")');
+  assert.equal((await api('/admin-api/services')).find(row=>row.id===30).poll_max_attempts,7);
+ }finally{
+  await api('/admin-api/services/30',{method:'POST',body:JSON.stringify({...before,builtin_icon:String(before.icon).replace('builtin:','')})});
+ }
+ const after=(await api('/admin-api/services')).find(row=>row.id===30);
+ for(const key of ['api_path','fetch_api_path','id_field_path','fetch_api_param_name','api_version','fetch_api_version','poll_max_attempts'])assert.equal(after[key],before[key]);
+ await evaluate('loaders.services().then(()=>{openServiceEditor(serviceRows.find(row=>row.id===30));return true})');
+ await evaluate('document.querySelector("[name=poll_max_attempts]").scrollIntoView({block:"center"});true');
+ const screenshot=await cmd('Page.captureScreenshot',{format:'png'});
+ fs.writeFileSync('.local/fulfillment-test/20261104-polling-settings.png',Buffer.from(screenshot.result.data,'base64'));
+ await evaluate('document.querySelector(".drawer-close").click();window.settingsDirty=false;document.querySelector("[data-page=orders]").click();true');
+ await wait('document.querySelector("#order-search")');
+ const successful=JSON.parse(fs.readFileSync('.local/fulfillment-test/20261104-integration.json','utf8')).find(row=>row.status==='success');
+ await evaluate('api("/order-detail/'+successful.orderNo+'").then(showOrderDetail)');
+ await evaluate('document.querySelector("[data-tool=diagnose]").click();true');
+ await wait('document.querySelector(".task-summary")');
+ assert.equal(await evaluate('document.querySelector(".order-tool-body").textContent.includes("回调接收记录")'),false);
+ assert.ok(await evaluate('document.querySelector(".order-tool-body").textContent.includes("获取报告")'));
+ await evaluate('document.querySelector("[data-tool=diagnose]").click();true');
+ assert.equal(await evaluate('document.querySelector(".order-tool-body").hidden'),true);
+ assert.deepEqual(errors,[]);
+ fs.writeFileSync('.local/fulfillment-test/20261104-ui-contracts.json',JSON.stringify({passed:true,paginationRows:first.total,serviceCount:all.length,errors,checkedAt:new Date().toISOString()},null,2));
+ console.log('PASS original service count, no supplier callback settings, authenticated pagination, invalid attempt limit rejected, actual UI save/restore, unchanged interface parameters, diagnostics toggle, no browser exceptions');
+ socket.close();
+})().catch(error=>{console.error(error.message);process.exit(1)});
