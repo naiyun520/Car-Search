@@ -30,11 +30,11 @@ public class AdminOrderController {
         page=Math.max(1,page);size=Math.max(1,Math.min(100,size));List<Object>args=new ArrayList<>();StringBuilder where=new StringBuilder(" where 1=1");if(!status.isBlank()){where.append(" and o.status=?");args.add(status);}if(!keyword.isBlank()){String like="%"+keyword.trim()+"%";where.append(" and (o.order_no like ? or p.order_no like ? or p.transaction_id like ? or p.wechat_order_id like ? or p.wechat_pay_transaction_id like ? or p.channel_order_id like ? or u.nickname like ? or u.phone like ?");for(int i=0;i<8;i++)args.add(like);if(keyword.matches("\\d+")){where.append(" or o.user_id=?");args.add(Long.parseLong(keyword));}where.append(")");}
         long total=scalar("select count(*) from ci_order o left join ci_user u on u.id=o.user_id left join ci_payment p on p.order_id=o.id"+where,args.toArray());List<Object>pageArgs=new ArrayList<>(args);pageArgs.add(size);pageArgs.add((page-1)*size);
         List<Map<String,Object>>rows=jdbc.queryForList("select o.id,o.order_no,o.user_id,o.service_name,o.amount,o.status,o.paid_at,o.queried_at,o.created_at,u.nickname,u.phone,p.wechat_order_type,p.wechat_order_id,p.wechat_pay_transaction_id,p.channel_order_id,p.delivery_status,p.delivery_attempts,p.delivery_last_error,p.delivered_at,p.refund_status,p.refund_source,p.refund_order_no,p.refund_amount,p.refund_reason,p.refund_from_status,p.refund_last_error,p.refund_requested_at,p.refunded_at from ci_order o left join ci_user u on u.id=o.user_id left join ci_payment p on p.order_id=o.id"+where+" order by o.id desc limit ? offset ?",pageArgs.toArray());
-        rows.forEach(this::decorate);return ApiResponse.ok(Pagination.of(rows,total,page,size));
+        attachOrderBalances(rows);rows.forEach(this::decorate);return ApiResponse.ok(Pagination.of(rows,total,page,size));
     }
 
     @GetMapping("/order-detail/{orderNo}")
-    public ApiResponse<Map<String,Object>>detail(@PathVariable String orderNo){List<Map<String,Object>>rows=jdbc.queryForList("select o.*,u.nickname,u.phone,p.transaction_id,p.wechat_order_id,p.wechat_pay_transaction_id,p.channel_order_id,p.wechat_order_type,p.status payment_status,p.pay_env,p.callback_payload,p.last_checked_at,p.delivery_status,p.delivery_attempts,p.delivery_attempted_at,p.delivery_last_error,p.delivered_at,p.refund_status,p.refund_source,p.refund_order_no,p.refund_amount,p.refund_reason,p.refund_last_error,p.refund_requested_at,p.refunded_at from ci_order o left join ci_user u on u.id=o.user_id left join ci_payment p on p.order_id=o.id where o.order_no=?",orderNo);if(rows.isEmpty())throw new BusinessException(404,HttpStatus.NOT_FOUND,"订单不存在");Map<String,Object>row=rows.getFirst();row.put("input",decrypt(text(row.get("input_cipher")),"订单查询输入"));Map<String,Object>result=decrypt(text(row.get("result_cipher")),"订单查询结果");row.put("result",ResultValueFormatter.formatItems(result.getOrDefault("items",List.of())));row.put("editable_result",result.getOrDefault("items",List.of()));Map<String,Object>wx=jsonMap(text(row.get("callback_payload")));wx.remove("token");row.put("wechat_order",wx);row.put("refund_reason_label",refundReason(text(row.get("refund_reason"))));for(String k:List.of("input_cipher","result_cipher","service_snapshot_cipher","callback_payload"))row.remove(k);return ApiResponse.ok(row);}
+    public ApiResponse<Map<String,Object>>detail(@PathVariable String orderNo){List<Map<String,Object>>rows=jdbc.queryForList("select o.*,u.nickname,u.phone,p.transaction_id,p.wechat_order_id,p.wechat_pay_transaction_id,p.channel_order_id,p.wechat_order_type,p.status payment_status,p.pay_env,p.callback_payload,p.last_checked_at,p.delivery_status,p.delivery_attempts,p.delivery_attempted_at,p.delivery_last_error,p.delivered_at,p.refund_status,p.refund_source,p.refund_order_no,p.refund_amount,p.refund_reason,p.refund_last_error,p.refund_requested_at,p.refunded_at from ci_order o left join ci_user u on u.id=o.user_id left join ci_payment p on p.order_id=o.id where o.order_no=?",orderNo);if(rows.isEmpty())throw new BusinessException(404,HttpStatus.NOT_FOUND,"订单不存在");attachOrderBalances(rows);Map<String,Object>row=rows.getFirst();row.put("input",decrypt(text(row.get("input_cipher")),"订单查询输入"));Map<String,Object>result=decrypt(text(row.get("result_cipher")),"订单查询结果");row.put("result",ResultValueFormatter.formatItems(result.getOrDefault("items",List.of())));row.put("editable_result",result.getOrDefault("items",List.of()));Map<String,Object>wx=jsonMap(text(row.get("callback_payload")));wx.remove("token");row.put("wechat_order",wx);row.put("refund_reason_label",refundReason(text(row.get("refund_reason"))));for(String k:List.of("input_cipher","result_cipher","service_snapshot_cipher","callback_payload"))row.remove(k);return ApiResponse.ok(row);}
 
     @GetMapping("/orders/{orderNo}/result-revisions")
     public ApiResponse<List<Map<String,Object>>> resultRevisions(@PathVariable String orderNo){
@@ -94,7 +94,8 @@ public class AdminOrderController {
     public ApiResponse<Map<String,Object>> fulfillment(@PathVariable String orderNo){
         Map<String,Object> order=orderByNo(orderNo);
         List<Map<String,Object>> task=jdbc.queryForList("select * from ci_query_job where order_id=?",order.get("id"));
-        List<Map<String,Object>> calls=jdbc.queryForList("select id,stage,call_status,billing_status,cost_amount,provider_request_id,business_code,duration_ms,error_class,error_message,started_at,finished_at from ci_provider_call where order_id=? order by id desc",order.get("id"));
+        List<Map<String,Object>> calls=jdbc.queryForList("select id,provider_id,stage,call_status,billing_status,cost_amount,provider_request_id,business_code,duration_ms,error_class,error_message,started_at,finished_at from ci_provider_call where order_id=? order by id desc",order.get("id"));
+        attachCallBalances(calls);
         return ApiResponse.ok(Map.of("task",task.isEmpty()?Map.of():task.getFirst(),"calls",calls));
     }
 
@@ -131,6 +132,37 @@ public class AdminOrderController {
     }
     private Map<String,Object>paymentOrder(String no){List<Map<String,Object>>rows=jdbc.queryForList("select o.*,u.openid from ci_order o join ci_user u on u.id=o.user_id where o.order_no=?",no);if(rows.isEmpty())throw new BusinessException(404,HttpStatus.NOT_FOUND,"订单不存在");return rows.getFirst();}
     private void decorate(Map<String,Object>r){int type=number(r.get("wechat_order_type"),-1);r.put("payment_platform",type==7||type==8?"ios":type==0||type==1?"wechat":"unknown");String status=text(r.get("status"));r.put("fulfillment_status",Set.of("refunding","refunded").contains(status)?(!text(r.get("refund_from_status")).isBlank()?r.get("refund_from_status"):"delivered".equals(text(r.get("delivery_status")))?"success":"query_failed"):status);}
+    private void attachOrderBalances(List<Map<String,Object>> rows){attachBalances(rows,"id","order_id");}
+    private void attachCallBalances(List<Map<String,Object>> rows){attachBalances(rows,"id","provider_call_id");}
+    private void attachBalances(List<Map<String,Object>> targets,String targetId,String snapshotLink){
+        List<Long> ids=targets.stream().map(r->longNumber(r.get(targetId))).filter(v->v>0).distinct().toList();
+        if(ids.isEmpty())return;
+        String marks=String.join(",",Collections.nCopies(ids.size(),"?"));
+        List<Map<String,Object>> snapshots=jdbc.queryForList("select s."+snapshotLink+" linked_id,s.phase,s.balance,s.status,s.error_message,s.observed_at,p.name provider_name from ci_provider_balance_snapshot s left join ci_provider p on p.id=s.provider_id where s."+snapshotLink+" in ("+marks+") and s.phase in ('before','after') order by s.observed_at,s.id",ids.toArray());
+        Map<Long,List<Map<String,Object>>> grouped=new HashMap<>();
+        for(Map<String,Object> snapshot:snapshots)grouped.computeIfAbsent(longNumber(snapshot.get("linked_id")),ignored->new ArrayList<>()).add(snapshot);
+        for(Map<String,Object> target:targets)applyBalanceSummary(target,grouped.getOrDefault(longNumber(target.get(targetId)),List.of()));
+    }
+    private void applyBalanceSummary(Map<String,Object> target,List<Map<String,Object>> snapshots){
+        BigDecimal before=null,after=null;boolean firstBeforeSeen=false;String providerName="",lastError="";Object observedAt=null;
+        for(Map<String,Object> snapshot:snapshots){
+            if(!text(snapshot.get("provider_name")).isBlank())providerName=text(snapshot.get("provider_name"));
+            observedAt=snapshot.get("observed_at");
+            if("failed".equals(text(snapshot.get("status")))&&!text(snapshot.get("error_message")).isBlank())lastError=text(snapshot.get("error_message"));
+            boolean success="success".equals(text(snapshot.get("status")))&&snapshot.get("balance")!=null;
+            if("before".equals(text(snapshot.get("phase")))&&!firstBeforeSeen){firstBeforeSeen=true;if(success)before=decimal(snapshot.get("balance"));}
+            if("after".equals(text(snapshot.get("phase"))))after=success?decimal(snapshot.get("balance")):null;
+        }
+        target.put("provider_balance_status",before!=null&&after!=null?"captured":before!=null||after!=null?"partial":snapshots.isEmpty()?"none":"failed");
+        if(before!=null)target.put("provider_balance_before",before);
+        if(after!=null)target.put("provider_balance_after",after);
+        if(before!=null&&after!=null)target.put("provider_balance_change",after.subtract(before));
+        if(!providerName.isBlank())target.put("provider_name",providerName);
+        if(observedAt!=null)target.put("provider_balance_observed_at",observedAt);
+        if(!lastError.isBlank())target.put("provider_balance_error",lastError);
+    }
+    private long longNumber(Object value){try{return value instanceof Number n?n.longValue():Long.parseLong(text(value));}catch(Exception ignored){return 0;}}
+    private BigDecimal decimal(Object value){try{return value instanceof BigDecimal b?b:new BigDecimal(text(value));}catch(Exception ignored){return BigDecimal.ZERO;}}
     private String summary(String type,Map<String,Object>p){String reason=text(first(p,"refund_request_reason","RefundRequestReason"));return switch(type){case"xpay_subscribe_ios_refund_query_notify"->"iOS 退款问询"+(reason.isBlank()?"":"："+refundReason(reason));case"xpay_refund_notify"->"退款结果："+(number(first(p,"RetCode","ret_code"),-1)==0?"成功":text(first(p,"RetMsg","ret_msg")));case"xpay_goods_deliver_notify"->"虚拟支付发货通知";case"xpay_coin_pay_notify"->"代币支付通知";case"xpay_complaint_notify"->"用户投诉："+cut(text(first(p,"ComplaintDetail","complaint_detail")),100);case"xpay_wxpay_callback_notify"->"微信支付风控通知："+cut(text(first(p,"Remark","remark")),100);default->"其他微信消息";};}
     private String refundReason(String r){return Map.of("UNINTENDED_PURCHASE","误操作购买","DID_NOT_MEAN_TO_BUY","误操作购买","ITEM_NOT_RECEIVED","未收到购买内容","ITEM_NOT_AS_DESCRIBED","内容与描述不符","QUALITY_ISSUE","质量问题","CHILD_PURCHASE","未成年人购买","OTHER","其他原因").getOrDefault(r.toUpperCase(Locale.ROOT),r);}
     private Map<String,Object>decrypt(String cipher,String label){if(cipher.isBlank())return Map.of();Map<String,Object>v=crypto.decrypt(cipher);if(v.isEmpty())throw new BusinessException(500,HttpStatus.INTERNAL_SERVER_ERROR,label+"无法解密，请检查服务器主加密密钥是否与原环境一致");return v;}

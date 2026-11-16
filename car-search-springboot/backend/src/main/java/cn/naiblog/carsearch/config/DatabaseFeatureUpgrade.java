@@ -75,6 +75,10 @@ public class DatabaseFeatureUpgrade implements ApplicationRunner {
         addColumn("ci_provider", "balance_api_version", "varchar(20) not null default ''");
         addColumn("ci_provider", "balance_value_path", "varchar(100) not null default ''");
         addColumn("ci_provider", "balance_refresh_minutes", "int unsigned not null default 10");
+        addColumn("ci_provider", "order_balance_tracking_enabled", "tinyint not null default 0");
+        addColumn("ci_provider_balance_snapshot", "order_id", "bigint unsigned null after provider_id");
+        addColumn("ci_provider_balance_snapshot", "provider_call_id", "bigint unsigned null after order_id");
+        addColumn("ci_provider_balance_snapshot", "phase", "varchar(16) null after provider_call_id");
         addColumn("ci_order", "user_visible_until", "datetime null");
         addColumn("ci_order", "admin_retention_until", "datetime null");
         addColumn("ci_order", "active_result_revision_id", "bigint unsigned null");
@@ -87,6 +91,8 @@ public class DatabaseFeatureUpgrade implements ApplicationRunner {
         addIndex("ci_payment", "idx_payment_refunded_at", "refunded_at");
         addIndex("ci_payment", "idx_payment_refund_checked", "refund_status,last_checked_at");
         addIndex("ci_order", "idx_order_admin_retention", "admin_retention_until,status");
+        addIndex("ci_provider_balance_snapshot", "idx_provider_balance_order", "order_id,phase,status,observed_at");
+        addUniqueIndex("ci_provider_balance_snapshot", "uk_provider_balance_call_phase", "provider_call_id,phase");
 
         jdbc.update("update ci_service set payment_product_id_android=payment_product_id where payment_product_id_android='' and payment_product_id<>''");
         jdbc.update("update ci_service set payment_product_id_ios=payment_product_id where payment_product_id_ios='' and payment_product_id<>''");
@@ -166,6 +172,9 @@ public class DatabaseFeatureUpgrade implements ApplicationRunner {
                 create table if not exists ci_provider_balance_snapshot(
                   id bigint unsigned not null auto_increment,
                   provider_id int unsigned not null,
+                  order_id bigint unsigned null,
+                  provider_call_id bigint unsigned null,
+                  phase varchar(16) null,
                   balance decimal(18,4) null,
                   source varchar(24) not null,
                   status varchar(20) not null,
@@ -174,7 +183,9 @@ public class DatabaseFeatureUpgrade implements ApplicationRunner {
                   observed_at datetime not null,
                   created_at datetime not null,
                   primary key(id),
-                  key idx_provider_balance(provider_id,created_at)
+                  key idx_provider_balance(provider_id,created_at),
+                  key idx_provider_balance_order(order_id,phase,status,observed_at),
+                  unique key uk_provider_balance_call_phase(provider_call_id,phase)
                 ) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_unicode_ci
                 """);
         jdbc.execute("""
@@ -262,6 +273,11 @@ public class DatabaseFeatureUpgrade implements ApplicationRunner {
     private void addIndex(String table, String index, String columns) {
         if (!exists("select count(*) from information_schema.statistics where table_schema=database() and table_name=? and index_name=?", table, index))
             jdbc.execute("alter table " + table + " add index " + index + "(" + columns + ")");
+    }
+
+    private void addUniqueIndex(String table, String index, String columns) {
+        if (!exists("select count(*) from information_schema.statistics where table_schema=database() and table_name=? and index_name=?", table, index))
+            jdbc.execute("alter table " + table + " add unique index " + index + "(" + columns + ")");
     }
 
     private boolean exists(String sql, Object... args) {

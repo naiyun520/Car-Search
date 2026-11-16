@@ -103,6 +103,7 @@ function openProviderEditor(provider) {
           <div class="form-section"><h4>余额查询（可选）</h4><p class="hint">默认关闭。仅供应商明确提供独立余额接口时启用；不会影响订单履约。</p>
             <div class="form-grid three">
               <label>启用余额查询<select name="balance_enabled"><option value="0" ${Number(item.balance_enabled) === 1 ? '' : 'selected'}>否</option><option value="1" ${Number(item.balance_enabled) === 1 ? 'selected' : ''}>是</option></select></label>
+              <label>订单余额跟踪<select name="order_balance_tracking_enabled"><option value="0" ${Number(item.order_balance_tracking_enabled) === 1 ? '' : 'selected'}>关闭</option><option value="1" ${Number(item.order_balance_tracking_enabled) === 1 ? 'selected' : ''}>开启（每笔额外查询2次）</option></select><small class="field-note">成功或失败订单都会记录调用前后余额</small></label>
               <label>模式<select name="balance_mode"><option value="unsupported" ${(item.balance_mode || 'unsupported') === 'unsupported' ? 'selected' : ''}>不支持</option><option value="independent_api" ${item.balance_mode === 'independent_api' ? 'selected' : ''}>独立接口</option></select></label>
               <label>刷新间隔（分钟）<input name="balance_refresh_minutes" type="number" min="1" max="1440" value="${escapeHtml(item.balance_refresh_minutes || 10)}"></label>
               <label>接口路径<input name="balance_api_path" value="${escapeHtml(item.balance_api_path || '')}" placeholder="例如 /InterfaceClient/getBalance"></label>

@@ -28,4 +28,21 @@ class ProviderBalanceCapabilityTest {
         var result=new ProviderBalanceService(db,provider).refreshNow(1);
         assertEquals("success",result.get("status"));assertEquals(new BigDecimal("123.45"),result.get("balance"));verify(provider,times(1)).queryBalance(row);verify(db).update(contains("ci_provider_balance_snapshot"),any(Object[].class));
     }
+    @Test void orderTrackingStoresBeforeAndAfterSnapshots()throws Exception{
+        var db=mock(JdbcTemplate.class);var provider=mock(ProviderService.class);
+        Map<String,Object> row=Map.of("id",1,"status",1,"balance_enabled",1,"balance_mode","independent_api","order_balance_tracking_enabled",1);
+        when(db.queryForList(anyString(),any(Object[].class))).thenReturn(List.of(row));
+        when(provider.queryBalance(row)).thenReturn(new ProviderService.BalanceResult(new BigDecimal("100.00"),"200"),new ProviderService.BalanceResult(new BigDecimal("98.50"),"200"));
+        var balances=new ProviderBalanceService(db,provider);
+        assertEquals("success",balances.captureOrderBalance(9L,12L,1,"before").get("status"));
+        assertEquals("success",balances.captureOrderBalance(9L,12L,1,"after").get("status"));
+        verify(provider,times(2)).queryBalance(row);
+        verify(db,times(2)).update(contains("provider_call_id"),any(Object[].class));
+    }
+    @Test void disabledOrderTrackingNeverAddsBalanceTraffic()throws Exception{
+        var db=mock(JdbcTemplate.class);var provider=mock(ProviderService.class);
+        when(db.queryForList(anyString(),any(Object[].class))).thenReturn(List.of(Map.of("id",1,"status",1,"balance_enabled",1,"balance_mode","independent_api","order_balance_tracking_enabled",0)));
+        assertEquals("tracking_disabled",new ProviderBalanceService(db,provider).captureOrderBalance(9L,12L,1,"before").get("status"));
+        verifyNoInteractions(provider);
+    }
 }

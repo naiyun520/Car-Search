@@ -70,6 +70,27 @@ class UnifiedFulfillmentTest {
   waiting.removeFirst().run();assertEquals("waiting_result",task().get("state"));
  }
  @Test void uncertainSubmissionAndRetryNeverSubmitAgain() throws Exception {when(provider.submitAsync(anyMap(),anyMap())).thenThrow(new java.net.SocketTimeoutException("LOCAL"));submit();runner.retry("LOCAL");scheduler.runDueJobs();assertEquals("submit_unknown",task().get("state"));verify(provider,times(1)).submitAsync(anyMap(),anyMap());}
+ @Test void processingThenSuccessClearsTransientMessageAndNeverSubmitsAgain() throws Exception {
+  when(provider.fetchReport(anyMap(),anyString()))
+      .thenReturn(new ProviderService.FetchResult(ProviderService.FetchState.RUNNING,"200","LOCAL-REQ",List.of(),"供应商仍在处理中"))
+      .thenReturn(new ProviderService.FetchResult(ProviderService.FetchState.SUCCESS,"200","LOCAL-REQ",List.of(Map.of("key","name","label","说明","value","LOCAL-REPORT")),""));
+  submit();due();
+  assertEquals("waiting_result",task().get("state"));assertEquals("transient",task().get("last_error_class"));assertEquals("供应商仍在处理中",task().get("last_error_message"));
+  due();
+  assertEquals("success",order().get("status"));assertEquals("succeeded",task().get("state"));assertEquals(2,task().get("fetch_attempts"));
+  assertNull(task().get("last_error_class"));assertNull(task().get("last_error_code"));assertNull(task().get("last_error_message"));
+  runner.run(order());runner.retry("LOCAL");scheduler.runDueJobs();
+  verify(provider,times(1)).submitAsync(anyMap(),anyMap());verify(provider,times(2)).fetchReport(anyMap(),eq("LOCAL-REQ"));
+ }
+ @Test void failedSubmissionStillCapturesBeforeAndAfterBalance() throws Exception {
+  var balances=mock(ProviderBalanceService.class);
+  var tracked=new QueryJobScheduler(db,crypto,jobs,provider,calls,completion,balances);
+  when(provider.submitAsync(anyMap(),anyMap())).thenThrow(new ProviderQueryException("供应商拒绝查询","400","REQ-FAILED"));
+  tracked.runDueJobs();
+  verify(balances).captureOrderBalance(1L,0L,2,"before");
+  verify(balances).captureOrderBalance(1L,0L,2,"after");
+  assertEquals("query_failed",order().get("status"));
+ }
  @Test void deadlineCheckedBeforeNetwork() throws Exception {submit();db.update("update ci_query_job set deadline_at=?",LocalDateTime.now().minusSeconds(1));due();verify(provider,never()).fetchReport(anyMap(),anyString());assertEquals("timed_out",task().get("state"));}
  @Test void fetchAttemptsIncludeLastRunningAttempt() throws Exception {when(provider.fetchReport(anyMap(),anyString())).thenReturn(new ProviderService.FetchResult(ProviderService.FetchState.RUNNING,"200","LOCAL-REQ",List.of(),""));submit();due();due();assertEquals(2,task().get("fetch_attempts"));assertEquals("timed_out",task().get("state"));verify(provider,times(2)).fetchReport(anyMap(),anyString());}
  @Test void lostLeaseCannotCallSupplier() throws Exception {runner.run(order());var stale=jobs.claimDueJobs(1,"one").getFirst();db.update("update ci_query_job set version=version+1,lock_owner='two'");scheduler.process(stale);verifyNoInteractions(provider);}

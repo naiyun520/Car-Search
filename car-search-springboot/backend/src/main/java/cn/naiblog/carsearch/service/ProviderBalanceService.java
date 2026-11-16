@@ -49,10 +49,30 @@ public class ProviderBalanceService {
     }
 
     public List<Map<String, Object>> snapshots(int providerId, int limit) {
-        return jdbc.queryForList("select id,provider_id,balance,source,status,error_code,error_message,observed_at from ci_provider_balance_snapshot where provider_id=? order by id desc limit ?", providerId, Math.max(1, Math.min(100, limit)));
+        return jdbc.queryForList("select id,provider_id,order_id,provider_call_id,phase,balance,source,status,error_code,error_message,observed_at from ci_provider_balance_snapshot where provider_id=? order by id desc limit ?", providerId, Math.max(1, Math.min(100, limit)));
+    }
+
+    /**
+     * Captures a balance immediately before or after a billable provider call.
+     * Capture failures are persisted for diagnosis and must never decide the order result.
+     */
+    public Map<String, Object> captureOrderBalance(long orderId, long providerCallId, int providerId, String phase) {
+        if (!List.of("before", "after").contains(phase)) throw new IllegalArgumentException("invalid balance phase");
+        List<Map<String, Object>> rows = jdbc.queryForList("select * from ci_provider where id=?", providerId);
+        if (rows.isEmpty()) return Map.of("provider_id", providerId, "status", "missing");
+        Map<String,Object> row=rows.getFirst();
+        if(number(row.get("order_balance_tracking_enabled"))!=1)
+            return Map.of("provider_id",providerId,"status","tracking_disabled");
+        if(number(row.get("status"))!=1||number(row.get("balance_enabled"))!=1||!"independent_api".equals(text(row.get("balance_mode"))))
+            return Map.of("provider_id",providerId,"status","unsupported");
+        return refresh(row,"order",orderId,providerCallId,phase);
     }
 
     private Map<String, Object> refresh(Map<String, Object> row, String source) {
+        return refresh(row,source,null,null,null);
+    }
+
+    private Map<String, Object> refresh(Map<String, Object> row, String source, Long orderId, Long providerCallId, String phase) {
         int providerId = number(row.get("id"));
         if (!"independent_api".equals(text(row.get("balance_mode"))))
             return Map.of("provider_id", providerId, "status", "unsupported", "message", "该供应商未配置余额接口，无法查询余额");
@@ -61,14 +81,24 @@ public class ProviderBalanceService {
         LocalDateTime now = LocalDateTime.now();
         try {
             ProviderService.BalanceResult value = provider.queryBalance(row);
-            jdbc.update("insert into ci_provider_balance_snapshot(provider_id,balance,source,status,observed_at,created_at) values(?,?,?,'success',?,?)",
-                    providerId, value.balance(), source, now, now);
+            if(providerCallId==null){
+                jdbc.update("insert into ci_provider_balance_snapshot(provider_id,balance,source,status,observed_at,created_at) values(?,?,?,'success',?,?)",
+                        providerId,value.balance(),source,now,now);
+            }else{
+                jdbc.update("insert into ci_provider_balance_snapshot(provider_id,order_id,provider_call_id,phase,balance,source,status,observed_at,created_at) values(?,?,?,?,?,?,'success',?,?) on duplicate key update balance=values(balance),status='success',error_code=null,error_message=null,observed_at=values(observed_at),created_at=values(created_at)",
+                        providerId,orderId,providerCallId,phase,value.balance(),source,now,now);
+            }
             return Map.of("provider_id", providerId, "status", "success", "balance", value.balance(), "observed_at", now);
         } catch (Exception error) {
             String code = error instanceof ProviderQueryException p ? p.providerCode() : "error";
             String message = error instanceof java.net.http.HttpTimeoutException||error instanceof java.net.SocketTimeoutException?"连接供应商余额接口超时，请稍后刷新；若持续超时，请检查接口地址与服务器网络":error instanceof java.net.ConnectException?"无法连接供应商余额接口，请检查接口地址和服务器网络":cut(error.getMessage(),500);
-            jdbc.update("insert into ci_provider_balance_snapshot(provider_id,balance,source,status,error_code,error_message,observed_at,created_at) values(?,null,?,'failed',?,?,?,?)",
-                    providerId, source, code, message, now, now);
+            if(providerCallId==null){
+                jdbc.update("insert into ci_provider_balance_snapshot(provider_id,balance,source,status,error_code,error_message,observed_at,created_at) values(?,null,?,'failed',?,?,?,?)",
+                        providerId,source,code,message,now,now);
+            }else{
+                jdbc.update("insert into ci_provider_balance_snapshot(provider_id,order_id,provider_call_id,phase,balance,source,status,error_code,error_message,observed_at,created_at) values(?,?,?,?,null,?,'failed',?,?,?,?) on duplicate key update balance=null,status='failed',error_code=values(error_code),error_message=values(error_message),observed_at=values(observed_at),created_at=values(created_at)",
+                        providerId,orderId,providerCallId,phase,source,code,message,now,now);
+            }
             return Map.of("provider_id", providerId, "status", "failed", "error_code", code, "message", message, "observed_at", now);
         }
     }

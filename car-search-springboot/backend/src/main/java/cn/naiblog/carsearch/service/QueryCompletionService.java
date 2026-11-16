@@ -31,7 +31,7 @@ public class QueryCompletionService {
         transaction.executeWithoutResult(tx->{
             Map<String,Object> current=jdbc.queryForMap("select status from ci_order where id=? for update",job.get("order_id"));
             if(!"querying".equals(current.get("status")))return;
-            int jobChanged=jdbc.update("update ci_query_job set state='succeeded',provider_request_id=coalesce(provider_request_id,?),next_run_at=null,lock_owner=null,locked_until=null,completed_at=?,updated_at=? where id=? and state not in ('succeeded','failed','no_data','timed_out','submit_unknown','direct_unknown','stopped')",blankToNull(requestId),now,now,job.get("id"));
+            int jobChanged=jdbc.update("update ci_query_job set state='succeeded',provider_request_id=coalesce(provider_request_id,?),last_error_class=null,last_error_code=null,last_error_message=null,next_run_at=null,lock_owner=null,locked_until=null,completed_at=?,updated_at=? where id=? and state not in ('succeeded','failed','no_data','timed_out','submit_unknown','direct_unknown','stopped')",blankToNull(requestId),now,now,job.get("id"));
             if(jobChanged!=1)return;
             int changed=jdbc.update("""
                     update ci_order set status='success',provider_code=?,provider_request_id=?,query_last_error=null,

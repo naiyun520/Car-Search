@@ -28,6 +28,7 @@ public class QueryJobScheduler {
     private final QueryJobService jobs;
     private final ProviderService provider;
     private final ProviderCallService calls;
+    private final ProviderBalanceService balances;
     private final QueryCompletionService completion;
     private final String workerId="query-"+UUID.randomUUID();
     private final AtomicBoolean running=new AtomicBoolean();
@@ -40,20 +41,31 @@ public class QueryJobScheduler {
 
     public QueryJobScheduler(JdbcTemplate jdbc,CryptoService crypto,QueryJobService jobs,ProviderService provider,
                              ProviderCallService calls,QueryCompletionService completion){
-        this(jdbc,crypto,jobs,provider,calls,completion,Runnable::run,1);
+        this(jdbc,crypto,jobs,provider,calls,completion,null,Runnable::run,1);
+    }
+
+    QueryJobScheduler(JdbcTemplate jdbc,CryptoService crypto,QueryJobService jobs,ProviderService provider,
+                      ProviderCallService calls,QueryCompletionService completion,ProviderBalanceService balances){
+        this(jdbc,crypto,jobs,provider,calls,completion,balances,Runnable::run,1);
     }
 
     @Autowired
     public QueryJobScheduler(JdbcTemplate jdbc,CryptoService crypto,QueryJobService jobs,ProviderService provider,
-                             ProviderCallService calls,QueryCompletionService completion,
+                             ProviderCallService calls,QueryCompletionService completion,ProviderBalanceService balances,
                              @Qualifier("queryWorkerExecutor") ThreadPoolTaskExecutor workers){
-        this(jdbc,crypto,jobs,provider,calls,completion,workers,workers.getMaxPoolSize());
+        this(jdbc,crypto,jobs,provider,calls,completion,balances,workers,workers.getMaxPoolSize());
     }
 
     QueryJobScheduler(JdbcTemplate jdbc,CryptoService crypto,QueryJobService jobs,ProviderService provider,
                       ProviderCallService calls,QueryCompletionService completion,Executor executor,int concurrency){
+        this(jdbc,crypto,jobs,provider,calls,completion,null,executor,concurrency);
+    }
+
+    QueryJobScheduler(JdbcTemplate jdbc,CryptoService crypto,QueryJobService jobs,ProviderService provider,
+                      ProviderCallService calls,QueryCompletionService completion,ProviderBalanceService balances,
+                      Executor executor,int concurrency){
         this.jdbc=jdbc;this.crypto=crypto;this.jobs=jobs;this.provider=provider;this.calls=calls;
-        this.completion=completion;this.executor=executor;this.slots=new Semaphore(Math.max(1,concurrency));
+        this.completion=completion;this.balances=balances;this.executor=executor;this.slots=new Semaphore(Math.max(1,concurrency));
     }
 
     @Scheduled(scheduler="queryTaskScheduler",fixedDelayString="${car.query-job-delay-ms:10000}",initialDelayString="${car.query-job-initial-delay-ms:20000}")
@@ -133,6 +145,7 @@ public class QueryJobScheduler {
         LocalDateTime started=LocalDateTime.now();
         BigDecimal cost=money(order.get("cost_amount"));
         long callId=calls.start(job,"DIRECT_QUERY","unknown",cost);
+        captureBalance(job,callId,"before");
         try{
             ProviderService.Result result=provider.executeDirect(service,crypto.decrypt(text(order.get("input_cipher"))));
             calls.succeed(callId,"confirmed",result.requestId(),result.code(),started);
@@ -143,6 +156,8 @@ public class QueryJobScheduler {
         }catch(Exception unknown){
             calls.fail(callId,"unknown","unknown","","","unknown",unknown.getMessage(),started);
             completion.completeFailure(job,"direct_unknown","error","","同步查询结果不确定，已停止且不会重复查询");
+        }finally{
+            captureBalance(job,callId,"after");
         }
     }
 
@@ -150,6 +165,7 @@ public class QueryJobScheduler {
         LocalDateTime started=LocalDateTime.now();
         jdbc.update("update ci_query_job set submit_attempts=submit_attempts+1 where id=? and state='submitting'",job.get("id"));
         long callId=calls.start(job,"SUBMIT","confirmed",money(order.get("cost_amount")));
+        captureBalance(job,callId,"before");
         try{
             ProviderService.SubmitResult result=provider.submitAsync(service,crypto.decrypt(text(order.get("input_cipher"))));
             calls.succeed(callId,"confirmed",result.requestId(),result.businessCode(),started);
@@ -161,6 +177,8 @@ public class QueryJobScheduler {
         }catch(Exception unknown){
             calls.fail(callId,"unknown","confirmed","","","unknown",unknown.getMessage(),started);
             completion.completeFailure(job,"submit_unknown","error","","异步下单结果不确定，已停止且不会重复下单");
+        }finally{
+            captureBalance(job,callId,"after");
         }
     }
 
@@ -211,7 +229,17 @@ public class QueryJobScheduler {
     }
 
     private boolean permanent(Exception error){String m=safe(error.getMessage());return m.contains("未配置")||m.contains("已禁用")||m.contains("无效")||m.contains("不安全")||error instanceof ProviderQueryException;}
+    private void captureBalance(Map<String,Object> job,long callId,String phase){
+        if(balances==null)return;
+        try{
+            int providerId=number(job.get("provider_id"));
+            if(providerId>0)balances.captureOrderBalance(longNumber(job.get("order_id")),callId,providerId,phase);
+        }catch(Exception error){
+            log.warn("order balance capture failed order={} call={} phase={} reason={}",job.get("order_id"),callId,phase,safe(error.getMessage()));
+        }
+    }
     private String providerCode(Exception error){return error instanceof ProviderQueryException p?p.providerCode():"error";}
+    private long longNumber(Object value){try{return value instanceof Number n?n.longValue():Long.parseLong(text(value));}catch(Exception ignored){return 0;}}
     private LocalDateTime date(Object value){return value instanceof java.sql.Timestamp t?t.toLocalDateTime():value instanceof LocalDateTime d?d:null;}
     private int number(Object value){return number(value,0);}
     private int number(Object value,int fallback){try{return value instanceof Number n?n.intValue():Integer.parseInt(text(value));}catch(Exception ignored){return fallback;}}

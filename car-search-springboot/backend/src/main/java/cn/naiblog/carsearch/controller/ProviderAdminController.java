@@ -34,7 +34,7 @@ public class ProviderAdminController {
     @GetMapping("/providers")
     public ApiResponse<List<Map<String, Object>>> list() {
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "select p.id,p.name,p.code,p.auth_type,p.config_cipher,p.base_url,p.allow_http,p.status,p.sort,p.balance_enabled,p.balance_mode,p.balance_api_path,p.balance_api_version,p.balance_value_path,p.balance_refresh_minutes,p.updated_at,s.balance latest_balance,s.status latest_balance_status,s.error_message latest_balance_error,s.observed_at latest_balance_at from ci_provider p left join ci_provider_balance_snapshot s on s.id=(select x.id from ci_provider_balance_snapshot x where x.provider_id=p.id order by x.id desc limit 1) order by p.sort,p.id");
+                "select p.id,p.name,p.code,p.auth_type,p.config_cipher,p.base_url,p.allow_http,p.status,p.sort,p.balance_enabled,p.balance_mode,p.balance_api_path,p.balance_api_version,p.balance_value_path,p.balance_refresh_minutes,p.order_balance_tracking_enabled,p.updated_at,s.balance latest_balance,s.status latest_balance_status,s.error_message latest_balance_error,s.observed_at latest_balance_at from ci_provider p left join ci_provider_balance_snapshot s on s.id=(select x.id from ci_provider_balance_snapshot x where x.provider_id=p.id order by x.id desc limit 1) order by p.sort,p.id");
         rows.forEach(this::safe);
         return ApiResponse.ok(rows);
     }
@@ -70,10 +70,10 @@ public class ProviderAdminController {
         if (scalar("select count(*) from ci_provider where code=?", v.code) > 0)
             throw new BusinessException("供应商编码已存在");
         LocalDateTime now = LocalDateTime.now();
-        int id=GeneratedInsert.insert(jdbc,"insert into ci_provider(name,code,auth_type,config_cipher,base_url,allow_http,status,sort,balance_enabled,balance_mode,balance_api_path,balance_api_version,balance_value_path,balance_refresh_minutes,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        int id=GeneratedInsert.insert(jdbc,"insert into ci_provider(name,code,auth_type,config_cipher,base_url,allow_http,status,sort,balance_enabled,balance_mode,balance_api_path,balance_api_version,balance_value_path,balance_refresh_minutes,order_balance_tracking_enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 v.name, v.code, v.authType, crypto.encrypt(v.configMap), v.baseUrl, v.allowHttp ? 1 : 0, v.status,
                 scalar("select coalesce(max(sort),0)+1 from ci_provider"), v.balanceEnabled ? 1 : 0, v.balanceMode,
-                v.balanceApiPath, v.balanceApiVersion, v.balanceValuePath, v.balanceRefreshMinutes, now, now);
+                v.balanceApiPath, v.balanceApiVersion, v.balanceValuePath, v.balanceRefreshMinutes, v.orderBalanceTrackingEnabled ? 1 : 0, now, now);
         audit.record(req, "provider.create", "provider", String.valueOf(id), Map.of("code", v.code));
         return ApiResponse.ok(Map.of("id", id), "供应商已创建");
     }
@@ -82,11 +82,11 @@ public class ProviderAdminController {
     public ApiResponse<Map<String, Object>> update(@PathVariable int id, @RequestBody Map<String, Object> b, HttpServletRequest req) {
         Map<String, Object> old = find(id);
         Validated v = validate(b, old);
-        jdbc.update("update ci_provider set name=?,code=?,auth_type=?,config_cipher=?,base_url=?,allow_http=?,status=?,balance_enabled=?,balance_mode=?,balance_api_path=?,balance_api_version=?,balance_value_path=?,balance_refresh_minutes=?,updated_at=? where id=?",
+        jdbc.update("update ci_provider set name=?,code=?,auth_type=?,config_cipher=?,base_url=?,allow_http=?,status=?,balance_enabled=?,balance_mode=?,balance_api_path=?,balance_api_version=?,balance_value_path=?,balance_refresh_minutes=?,order_balance_tracking_enabled=?,updated_at=? where id=?",
                 v.name, v.code, v.authType,
                 v.configMap.isEmpty() ? old.get("config_cipher") : crypto.encrypt(v.configMap),
                 v.baseUrl, v.allowHttp ? 1 : 0, v.status, v.balanceEnabled ? 1 : 0, v.balanceMode,
-                v.balanceApiPath, v.balanceApiVersion, v.balanceValuePath, v.balanceRefreshMinutes, LocalDateTime.now(), id);
+                v.balanceApiPath, v.balanceApiVersion, v.balanceValuePath, v.balanceRefreshMinutes, v.orderBalanceTrackingEnabled ? 1 : 0, LocalDateTime.now(), id);
         audit.record(req, "provider.update", "provider", String.valueOf(id), Map.of("fields", b.keySet()));
         return ApiResponse.ok(Map.of("id", id), "供应商已保存");
     }
@@ -132,6 +132,7 @@ public class ProviderAdminController {
         String balanceApiVersion = text(b.getOrDefault("balance_api_version", old == null ? "" : old.get("balance_api_version")));
         String balanceValuePath = text(b.getOrDefault("balance_value_path", old == null ? "" : old.get("balance_value_path")));
         int balanceRefreshMinutes = integer(b.getOrDefault("balance_refresh_minutes", old == null ? 10 : old.get("balance_refresh_minutes")));
+        boolean orderBalanceTrackingEnabled = "1".equals(text(b.getOrDefault("order_balance_tracking_enabled", old == null ? 0 : old.get("order_balance_tracking_enabled")))) || "true".equalsIgnoreCase(text(b.getOrDefault("order_balance_tracking_enabled", old == null ? 0 : old.get("order_balance_tracking_enabled"))));
 
         if (!code.matches("[a-z][a-z0-9_]{2,39}"))
             throw new BusinessException("供应商编码格式不正确（小写字母开头，仅限小写字母、数字和下划线）");
@@ -151,6 +152,7 @@ public class ProviderAdminController {
             throw new BusinessException("启用余额查询前必须配置独立余额接口");
         if (balanceEnabled && balanceApiPath.isBlank())throw new BusinessException("余额接口路径：启用余额查询时必须填写，例如 /InterfaceClient/getBalance");
         if (balanceEnabled && balanceValuePath.isBlank())throw new BusinessException("余额字段路径：启用余额查询时必须填写，例如 result.balance");
+        if(orderBalanceTrackingEnabled&&!balanceEnabled)throw new BusinessException("启用订单余额跟踪前，必须先启用供应商余额查询");
         if(balanceApiPath.length()>500)throw new BusinessException("余额接口路径：不能超过500个字符");
         if(balanceApiVersion.length()>20)throw new BusinessException("余额接口版本：不能超过20个字符");
         if(balanceValuePath.length()>100)throw new BusinessException("余额字段路径：不能超过100个字符");
@@ -189,7 +191,7 @@ public class ProviderAdminController {
             throw new BusinessException("签名认证必须填写 AppID 和 Secret");
         }
 
-        return new Validated(code, name, authType, baseUrl, allowHttp, status, configMap, balanceEnabled, balanceMode, balanceApiPath, balanceApiVersion, balanceValuePath, balanceRefreshMinutes);
+        return new Validated(code, name, authType, baseUrl, allowHttp, status, configMap, balanceEnabled, balanceMode, balanceApiPath, balanceApiVersion, balanceValuePath, balanceRefreshMinutes, orderBalanceTrackingEnabled);
     }
 
     private Map<String, Object> find(int id) {
@@ -220,5 +222,5 @@ public class ProviderAdminController {
 
     private record Validated(String code, String name, String authType, String baseUrl, boolean allowHttp, int status, Map<String, Object> configMap,
                              boolean balanceEnabled, String balanceMode, String balanceApiPath, String balanceApiVersion,
-                             String balanceValuePath, int balanceRefreshMinutes) {}
+                             String balanceValuePath, int balanceRefreshMinutes, boolean orderBalanceTrackingEnabled) {}
 }
